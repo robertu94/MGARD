@@ -3,11 +3,11 @@
 
 #include <cmath>
 #include <cstdlib>
-#include <cstring>
 
 #include <algorithm>
 #include <numeric>
 #include <random>
+#include <sstream>
 #include <vector>
 
 #include "testing_random.hpp"
@@ -26,26 +26,24 @@ template <std::size_t N, typename Real>
 void test_compression_decompression(
     const std::array<std::size_t, N> &shape,
     // Used for generating the data.
-    const Real s, std::default_random_engine &generator,
+    const Real s, std::default_random_engine &gen,
     const std::vector<Real> &smoothness_parameters,
     const std::vector<Real> &tolerances) {
-  std::uniform_real_distribution<Real> node_spacing_distribution(1, 2);
+  std::uniform_real_distribution<Real> node_spacing_dis(1, 2);
   const mgard::TensorMeshHierarchy<N, Real> hierarchy =
-      hierarchy_with_random_spacing(generator, node_spacing_distribution,
-                                    shape);
+      hierarchy_with_random_spacing(gen, node_spacing_dis, shape);
+
   const std::size_t ndof = hierarchy.ndof();
-
-  Real *const buffer = static_cast<Real *>(std::malloc(ndof * sizeof(*buffer)));
-  generate_reasonable_function(hierarchy, s, generator, buffer);
-
-  Real *const u = static_cast<Real *>(std::malloc(ndof * sizeof(*u)));
+  Real *const buffer = new Real[ndof];
+  generate_reasonable_function(hierarchy, s, gen, buffer);
+  Real *const u = new Real[ndof];
   // `generate_reasonable_function` uses `TensorMeshHierarchy::at`, so the
   // function will come out shuffled. `mgard::compress` shuffles its input,
   // though, so we need to unshuffle beforehand.
   mgard::unshuffle(hierarchy, buffer, u);
 
-  Real *const v = static_cast<Real *>(std::malloc(ndof * sizeof(*v)));
-  Real *const error = static_cast<Real *>(std::malloc(ndof * sizeof(*error)));
+  Real *const v = new Real[ndof];
+  Real *const error = new Real[ndof];
 
   TrialTracker tracker;
   for (const Real s : smoothness_parameters) {
@@ -53,15 +51,11 @@ void test_compression_decompression(
       blas::copy(ndof, u, v);
       blas::copy(ndof, u, error);
       // `v` and `error` are now unshuffled.
-
       const mgard::CompressedDataset<N, Real> compressed =
           mgard::compress(hierarchy, v, s, tolerance);
-
-      const std::unique_ptr<unsigned char const[]> new_data_ =
-          mgard::decompress(compressed.data(), compressed.size());
-      Real const *const new_data =
-          reinterpret_cast<Real const *>(new_data_.get());
-      blas::axpy(ndof, static_cast<Real>(-1), new_data, error);
+      const mgard::DecompressedDataset<N, Real> decompressed =
+          mgard::decompress(compressed);
+      blas::axpy(ndof, static_cast<Real>(-1), decompressed.data(), error);
       // `error` is calculated, but it's unshuffled. `mgard::norm` expects its
       // input to be shuffled, so we shuffle into `buffer`.
       mgard::shuffle(hierarchy, error, buffer);
@@ -70,33 +64,33 @@ void test_compression_decompression(
   }
   REQUIRE(tracker);
 
-  std::free(error);
-  std::free(v);
-  std::free(u);
-  std::free(buffer);
+  delete[] error;
+  delete[] v;
+  delete[] u;
+  delete[] buffer;
 }
 
 } // namespace
 
 TEMPLATE_TEST_CASE("compression followed by decompression", "[compress]", float,
                    double) {
-  std::default_random_engine generator;
+  std::default_random_engine gen(343873);
   const std::vector<TestType> smoothness_parameters = {
       -1.5, -0.5, 0.0, 0.5, 1.5, std::numeric_limits<TestType>::infinity()};
   const std::vector<TestType> tolerances = {1, 0.1, 0.01, 0.001};
 
   test_compression_decompression<1, TestType>(
-      {65}, 0.1, generator, smoothness_parameters, tolerances);
+      {65}, 0.1, gen, smoothness_parameters, tolerances);
   test_compression_decompression<1, TestType>(
-      {55}, 1.0, generator, smoothness_parameters, tolerances);
+      {55}, 1.0, gen, smoothness_parameters, tolerances);
   test_compression_decompression<2, TestType>(
-      {17, 19}, 0.3, generator, smoothness_parameters, tolerances);
+      {17, 19}, 0.3, gen, smoothness_parameters, tolerances);
   test_compression_decompression<2, TestType>(
-      {18, 18}, 0.5, generator, smoothness_parameters, tolerances);
+      {18, 18}, 0.5, gen, smoothness_parameters, tolerances);
   test_compression_decompression<3, TestType>(
-      {10, 5, 12}, 0, generator, smoothness_parameters, tolerances);
+      {10, 5, 12}, 0, gen, smoothness_parameters, tolerances);
   test_compression_decompression<3, TestType>(
-      {9, 9, 6}, 1.5, generator, smoothness_parameters, tolerances);
+      {9, 9, 6}, 1.5, gen, smoothness_parameters, tolerances);
 }
 
 namespace {
@@ -106,19 +100,17 @@ void test_compression_error_bound(
     const mgard::TensorMeshHierarchy<N, Real> &hierarchy, Real *const v,
     const Real s, const Real tolerance) {
   const std::size_t ndof = hierarchy.ndof();
-  Real *const error = static_cast<Real *>(std::malloc(ndof * sizeof(*error)));
+  Real *const error = new Real[ndof];
   blas::copy(ndof, v, error);
 
   const mgard::CompressedDataset<N, Real> compressed =
       mgard::compress(hierarchy, v, s, tolerance);
+  const mgard::DecompressedDataset<N, Real> decompressed =
+      mgard::decompress(compressed);
 
-  const std::unique_ptr<unsigned char const[]> new_data_ =
-      mgard::decompress(compressed.data(), compressed.size());
-  const Real *const new_data = reinterpret_cast<Real const *>(new_data_.get());
-  blas::axpy(ndof, static_cast<Real>(-1), new_data, error);
-
+  blas::axpy(ndof, static_cast<Real>(-1), decompressed.data(), error);
   const Real achieved = mgard::norm(hierarchy, error, s);
-  std::free(error);
+  delete[] error;
 
   REQUIRE(achieved <= tolerance);
 }
@@ -129,77 +121,67 @@ TEST_CASE("1D quadratic data", "[compress]") {
   {
     const mgard::TensorMeshHierarchy<1, float> hierarchy({64});
     const std::size_t ndof = hierarchy.ndof();
-    float *const v = static_cast<float *>(std::malloc(ndof * sizeof(*v)));
+    float *const v = new float[ndof];
     for (std::size_t i = 0; i < ndof; ++i) {
       v[i] = static_cast<float>(i * i) / ndof;
     }
-
     const float s = std::numeric_limits<float>::infinity();
     const float tolerance = 0.001;
     test_compression_error_bound<1, float>(hierarchy, v, s, tolerance);
-
-    std::free(v);
+    delete[] v;
   }
   {
     const mgard::TensorMeshHierarchy<1, double> hierarchy({65});
     const std::size_t ndof = hierarchy.ndof();
-    double *const v = static_cast<double *>(std::malloc(ndof * sizeof(*v)));
+    double *const v = new double[ndof];
     for (std::size_t i = 0; i < ndof; ++i) {
       v[i] = static_cast<double>(i * i) / ndof;
     }
-
     const double s = std::numeric_limits<double>::infinity();
     const double tolerance = 0.01;
     test_compression_error_bound<1, double>(hierarchy, v, s, tolerance);
-
-    std::free(v);
+    delete[] v;
   }
 }
 
 TEST_CASE("3D constant data", "[compress]") {
   const mgard::TensorMeshHierarchy<3, float> hierarchy({16, 16, 16});
   const std::size_t ndof = hierarchy.ndof();
-  float *const v = static_cast<float *>(std::malloc(ndof * sizeof(*v)));
+  float *const v = new float[ndof];
   std::fill(v, v + ndof, 10);
-
   const float s = std::numeric_limits<float>::infinity();
   const float tolerance = 0.01;
   test_compression_error_bound<3, float>(hierarchy, v, s, tolerance);
-
-  std::free(v);
+  delete[] v;
 }
 
 TEST_CASE("1D cosine data", "[compress]") {
   const mgard::TensorMeshHierarchy<1, double> hierarchy({4096});
   const std::size_t ndof = hierarchy.ndof();
-  double *const v = static_cast<double *>(std::malloc(ndof * sizeof(*v)));
+  double *const v = new double[ndof];
   const double pi = 3.141592653589793;
   for (std::size_t i = 0; i < ndof; ++i) {
     v[i] = std::cos(2 * pi * i / ndof);
   }
-
   const double s = std::numeric_limits<double>::infinity();
   const double tolerance = 0.000001;
   test_compression_error_bound<1, double>(hierarchy, v, s, tolerance);
-
-  std::free(v);
+  delete[] v;
 }
 
 TEST_CASE("2D cosine data", "[compress]") {
   const mgard::TensorMeshHierarchy<2, float> hierarchy({256, 16});
   const std::size_t ndof = hierarchy.ndof();
-  float *const v = static_cast<float *>(std::malloc(ndof * sizeof(*v)));
+  float *const v = new float[ndof];
   for (const mgard::TensorNode<2> node :
        mgard::ShuffledTensorNodeRange(hierarchy, hierarchy.L)) {
     const std::array<float, 2> xy = coordinates(hierarchy, node);
     hierarchy.at(v, node.multiindex) = std::cos(12 * xy.at(0) - 5 * xy.at(1));
   }
-
   const float s = std::numeric_limits<float>::infinity();
   const float tolerance = 0.001;
   test_compression_error_bound<2, float>(hierarchy, v, s, tolerance);
-
-  std::free(v);
+  delete[] v;
 }
 
 namespace {
@@ -208,43 +190,23 @@ template <std::size_t N, std::size_t M, typename Real>
 void test_compression_on_flat_mesh(
     const mgard::TensorMeshHierarchy<N, Real> &hierarchy, Real const *const u,
     const mgard::CompressedDataset<N, Real> &expected,
-    const std::array<std::size_t, M> shape, Real *v, TrialTracker &tracker) {
+    const std::array<std::size_t, M> shape, Real *const v,
+    TrialTracker &tracker) {
   const std::size_t ndof = hierarchy.ndof();
   const mgard::TensorMeshHierarchy<M, Real> flat_hierarchy =
       make_flat_hierarchy<N, M, Real>(hierarchy, shape);
   std::copy(u, u + ndof, v);
   const mgard::CompressedDataset<M, Real> obtained =
       mgard::compress(flat_hierarchy, v, expected.s, expected.tolerance);
-
-  std::size_t coord_size_expected = 0;
-  for (std::size_t i = 0; i < N; i++) {
-    coord_size_expected += hierarchy.coordinates.at(i).size() * sizeof(Real);
+  tracker += expected.size() == obtained.size();
+  {
+    unsigned char const *const p =
+        static_cast<unsigned char const *>(expected.data());
+    unsigned char const *const q =
+        static_cast<unsigned char const *>(obtained.data());
+    const std::size_t n = expected.size();
+    tracker += std::equal(p, p + n, q);
   }
-
-  std::size_t coord_size_obtained = 0;
-  for (std::size_t i = 0; i < M; i++) {
-    coord_size_obtained +=
-        flat_hierarchy.coordinates.at(i).size() * sizeof(Real);
-  }
-
-  tracker += expected.size() == (obtained.size() - (M - N) * 8 -
-                                 (coord_size_obtained - coord_size_expected));
-
-  const std::size_t metadata_expected = 5 + (1 + 1 + 1) + (1 + 1 + 1) + 4 + 1 +
-                                        1 + N * 8 + 8 + 8 + 8 + 4 + 1 +
-                                        coord_size_expected;
-
-  const std::size_t metadata_obtained = 5 + (1 + 1 + 1) + (1 + 1 + 1) + 4 + 1 +
-                                        1 + M * 8 + 8 + 8 + 8 + 4 + 1 +
-                                        coord_size_obtained;
-
-  tracker +=
-      std::memcmp(
-          static_cast<unsigned char *>(const_cast<void *>(expected.data())) +
-              metadata_expected,
-          static_cast<unsigned char *>(const_cast<void *>(obtained.data())) +
-              metadata_obtained,
-          expected.size() - metadata_expected) == 0;
 }
 
 } // namespace
@@ -255,15 +217,14 @@ TEST_CASE("compressing on 'flat' meshes", "[compress]") {
   const mgard::TensorMeshHierarchy<2, float> hierarchy =
       hierarchy_with_random_spacing<2, float>(gen, dis, {31, 8});
   const std::size_t ndof = hierarchy.ndof();
-  float *const u = static_cast<float *>(std::malloc(ndof * sizeof(float)));
-  float *const v = static_cast<float *>(std::malloc(ndof * sizeof(float)));
+  float *const u = new float[ndof];
+  float *const v = new float[ndof];
   {
     const float generation_s = 1.25;
-    float *const buffer =
-        static_cast<float *>(std::malloc(ndof * sizeof(float)));
+    float *const buffer = new float[ndof];
     generate_reasonable_function(hierarchy, generation_s, gen, buffer);
     mgard::unshuffle(hierarchy, buffer, u);
-    std::free(buffer);
+    delete[] buffer;
   }
 
   const std::vector<float> smoothness_parameters = {
@@ -286,8 +247,8 @@ TEST_CASE("compressing on 'flat' meshes", "[compress]") {
   }
   REQUIRE(tracker);
 
-  std::free(v);
-  std::free(u);
+  delete[] v;
+  delete[] u;
 }
 
 namespace {
@@ -295,25 +256,34 @@ namespace {
 template <std::size_t N, std::size_t M, typename Real>
 void test_decompression_on_flat_mesh(
     const mgard::TensorMeshHierarchy<N, Real> &hierarchy,
-    const mgard::CompressedDataset<N, Real> &compressed, const Real *expected,
+    const mgard::CompressedDataset<N, Real> &compressed,
+    const mgard::DecompressedDataset<N, Real> &expected,
     const std::array<std::size_t, M> shape, TrialTracker &tracker) {
   const std::size_t ndof = hierarchy.ndof();
   const mgard::TensorMeshHierarchy<M, Real> flat_hierarchy =
       make_flat_hierarchy<N, M, Real>(hierarchy, shape);
-  void *const data = new unsigned char[compressed.size()];
-  std::memcpy(data, compressed.data(), compressed.size());
-  const mgard::CompressedDataset<M, Real> flat_compressed(
-      flat_hierarchy, compressed.s, compressed.tolerance, data,
-      compressed.size());
+  const std::size_t nbytes = compressed.size();
+  void *const data = new unsigned char[nbytes];
+  {
+    unsigned char const *const p =
+        static_cast<unsigned char const *>(compressed.data());
+    unsigned char *const q = static_cast<unsigned char *>(data);
+    std::copy(p, p + nbytes, q);
+  }
 
-  const std::unique_ptr<unsigned char const[]> obtained_ =
-      mgard::decompress(flat_compressed.data(), flat_compressed.size());
-  Real const *const obtained = reinterpret_cast<Real const *>(obtained_.get());
+  mgard::pb::Header flat_header = compressed.header;
+  flat_hierarchy.populate(flat_header);
+
+  const mgard::CompressedDataset<M, Real> flat_compressed(
+      flat_hierarchy, flat_header, compressed.s, compressed.tolerance, data,
+      compressed.size());
+  const mgard::DecompressedDataset<M, Real> obtained =
+      mgard::decompress(flat_compressed);
   // Originally we compared `expected.data()` and `obtained.data()` bitwise.
   // When using `-ffast-math` after precomputing the shuffled indices, though,
   // we were getting some small discrepancies.
-  Real const *const p = expected;
-  Real const *const q = obtained;
+  Real const *const p = expected.data();
+  Real const *const q = obtained.data();
   for (std::size_t i = 0; i < ndof; ++i) {
     const Real expected_ = p[i];
     const Real obtained_ = q[i];
@@ -329,15 +299,14 @@ TEST_CASE("decompressing on 'flat' meshes", "[compress]") {
   const mgard::TensorMeshHierarchy<3, double> hierarchy =
       hierarchy_with_random_spacing<3, double>(gen, dis, {6, 5, 7});
   const std::size_t ndof = hierarchy.ndof();
-  double *const u = static_cast<double *>(std::malloc(ndof * sizeof(double)));
-  double *const v = static_cast<double *>(std::malloc(ndof * sizeof(double)));
+  double *const u = new double[ndof];
+  double *const v = new double[ndof];
   {
     const double generation_s = 0.25;
-    double *const buffer =
-        static_cast<double *>(std::malloc(ndof * sizeof(double)));
+    double *const buffer = new double[ndof];
     generate_reasonable_function(hierarchy, generation_s, gen, buffer);
     mgard::unshuffle(hierarchy, buffer, u);
-    std::free(buffer);
+    delete[] buffer;
   }
 
   const std::vector<double> smoothness_parameters = {
@@ -349,10 +318,8 @@ TEST_CASE("decompressing on 'flat' meshes", "[compress]") {
     for (const double tolerance : tolerances) {
       const mgard::CompressedDataset<3, double> compressed =
           mgard::compress(hierarchy, u, s, tolerance);
-      const std::unique_ptr<unsigned char const[]> expected_ =
-          mgard::decompress(compressed.data(), compressed.size());
-      double const *const expected =
-          reinterpret_cast<double const *>(expected_.get());
+      const mgard::DecompressedDataset<3, double> expected =
+          mgard::decompress(compressed);
 
       test_decompression_on_flat_mesh<3, 4, double>(
           hierarchy, compressed, expected, {6, 5, 1, 7}, tracker);
@@ -364,6 +331,84 @@ TEST_CASE("decompressing on 'flat' meshes", "[compress]") {
   }
   REQUIRE(tracker);
 
-  std::free(v);
-  std::free(u);
+  delete[] v;
+  delete[] u;
+}
+
+namespace {
+
+template <std::size_t N, typename Real>
+void test_self_describing_decompression(
+    const std::array<std::size_t, N> &shape,
+    // Used for generating the data.
+    const Real s, std::default_random_engine &gen,
+    const std::vector<Real> &smoothness_parameters,
+    const std::vector<Real> &tolerances) {
+  std::uniform_real_distribution<Real> node_spacing_dis(0.3, 0.45);
+  const mgard::TensorMeshHierarchy<N, Real> hierarchy =
+      hierarchy_with_random_spacing(gen, node_spacing_dis, shape);
+
+  const std::size_t ndof = hierarchy.ndof();
+  Real *const buffer = new Real[ndof];
+  generate_reasonable_function(hierarchy, s, gen, buffer);
+  Real *const u = new Real[ndof];
+  // `generate_reasonable_function` uses `TensorMeshHierarchy::at`, so the
+  // function will come out shuffled. `mgard::compress` shuffles its input,
+  // though, so we need to unshuffle beforehand.
+  mgard::unshuffle(hierarchy, buffer, u);
+  delete[] buffer;
+
+  // Need copies since `decompress` changes its input.
+  Real *const v = new Real[ndof];
+  Real *const w = new Real[ndof];
+
+  TrialTracker tracker;
+  for (const Real s : smoothness_parameters) {
+    for (const Real tolerance : tolerances) {
+      std::copy(u, u + ndof, v);
+      std::copy(u, u + ndof, w);
+
+      const mgard::CompressedDataset<N, Real> v_compressed =
+          mgard::compress(hierarchy, v, s, tolerance);
+      const mgard::DecompressedDataset<N, Real> v_decompressed =
+          mgard::decompress(v_compressed);
+
+      const mgard::CompressedDataset<N, Real> w_compressed =
+          mgard::compress(hierarchy, w, s, tolerance);
+      std::ostringstream w_ostream(std::ios_base::binary);
+      w_compressed.write(w_ostream);
+      const std::string w_serialization = w_ostream.str();
+      const mgard::MemoryBuffer<const unsigned char> w_decompressed =
+          mgard::decompress(w_serialization.c_str(), w_serialization.size());
+
+      Real const *const p = v_decompressed.data();
+      tracker +=
+          std::equal(p, p + ndof,
+                     reinterpret_cast<Real const *>(w_decompressed.data.get()));
+    }
+  }
+  REQUIRE(tracker);
+
+  delete[] w;
+  delete[] v;
+  delete[] u;
+}
+
+} // namespace
+
+TEMPLATE_TEST_CASE("decompressing self-describing buffer", "[compress]", float,
+                   double) {
+  std::default_random_engine gen(32094);
+  const std::vector<TestType> smoothness_parameters = {
+      -1.5, -0.5, 0.0, 0.5, 1.5, std::numeric_limits<TestType>::infinity()};
+  const std::vector<TestType> tolerances = {1, 0.1, 0.01, 0.001};
+
+  test_self_describing_decompression<1, TestType>(
+      {52}, 1.1, gen, smoothness_parameters, tolerances);
+  test_self_describing_decompression<2, TestType>(
+      {92, 36}, 0.4, gen, smoothness_parameters, tolerances);
+  test_self_describing_decompression<3, TestType>(
+      {28, 44, 17}, 0.5, gen, smoothness_parameters, tolerances);
+  test_self_describing_decompression<4, TestType>(
+      {5, 11, 8, 9}, 0.6, gen, smoothness_parameters, tolerances);
 }

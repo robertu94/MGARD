@@ -10,6 +10,8 @@
 #include <type_traits>
 #include <vector>
 
+#include "proto/mgard.pb.h"
+
 #include "TensorMeshHierarchyIteration.hpp"
 #include "utilities.hpp"
 
@@ -80,6 +82,13 @@ public:
   const Real &at(Real const *const u,
                  const std::array<std::size_t, N> multiindex) const;
 
+  //! Populate the relevant fields of a file format header.
+  //!
+  //! *This is an experimental part of the API.*
+  //!
+  //!\param header Header to be populated.
+  void populate(pb::Header &header) const;
+
   //! Shapes of the meshes composing the hierarchy, in 'increasing' order.
   std::vector<std::array<std::size_t, N>> shapes;
 
@@ -148,6 +157,27 @@ private:
   //! Implement `at`.
   template <typename T>
   T &at(T *const v, const std::array<std::size_t, N> multiindex) const;
+
+  //! Populate the domain message of a file format header.
+  //!
+  //! *This is an experimental part of the API.*
+  //!
+  //!\param header Header to be populated.
+  void populate_domain(pb::Header &header) const;
+
+  //! Populate the dataset message of a file format header.
+  //!
+  //! *This is an experimental part of the API.*
+  //!
+  //!\param header Header to be populated.
+  void populate_dataset(pb::Header &header) const;
+
+  //! Populate the decomposition message of a file format header.
+  //!
+  //! *This is an experimental part of the API.*
+  //!
+  //!\param header Header to be populated.
+  void populate_decomposition(pb::Header &header) const;
 };
 
 //! Equality comparison.

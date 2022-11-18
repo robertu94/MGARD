@@ -7,6 +7,8 @@
 #include <stdexcept>
 #include <vector>
 
+#include "proto/mgard.pb.h"
+
 #include "testing_utilities.hpp"
 
 #include "TensorMeshHierarchy.hpp"
@@ -242,11 +244,11 @@ template <std::size_t N>
 void test_entry_indexing_exhaustive(const std::array<std::size_t, N> shape) {
   const mgard::TensorMeshHierarchy<N, float> hierarchy(shape);
   const std::size_t ndof = hierarchy.ndof();
-  float *const buffer = static_cast<float *>(std::malloc(ndof * sizeof(float)));
+  float *const buffer = new float[ndof];
   std::iota(buffer, buffer + ndof, 0);
-  float *const u = static_cast<float *>(std::malloc(ndof * sizeof(float)));
+  float *const u = new float[ndof];
   mgard::shuffle(hierarchy, buffer, u);
-  std::free(buffer);
+  delete[] buffer;
   int expected = 0;
   TrialTracker tracker;
   for (const mgard::TensorNode<N> node :
@@ -259,7 +261,7 @@ void test_entry_indexing_exhaustive(const std::array<std::size_t, N> shape) {
     ++expected;
   }
   REQUIRE(tracker);
-  std::free(u);
+  delete[] u;
 }
 
 } // namespace
@@ -408,13 +410,13 @@ TEST_CASE("index iteration", "[TensorMeshHierarchy]") {
 TEST_CASE("node iteration", "[TensorMeshHierarchy]") {
   // The largest of the mesh sizes used below.
   const std::size_t N = 11 * 14;
-  float *const buffer = static_cast<float *>(std::malloc(N * sizeof(float)));
+  float *const buffer = new float[N];
   std::iota(buffer, buffer + N, 1);
 
   {
     const mgard::TensorMeshHierarchy<1, float> hierarchy({17});
     const std::size_t ndof = hierarchy.ndof();
-    float *const v = static_cast<float *>(std::malloc(ndof * sizeof(float)));
+    float *const v = new float[ndof];
     mgard::shuffle(hierarchy, buffer, v);
     std::vector<float> encountered_values;
     std::vector<std::size_t> encountered_ls;
@@ -427,13 +429,13 @@ TEST_CASE("node iteration", "[TensorMeshHierarchy]") {
     const std::vector<std::size_t> expected_ls = {0, 2, 1, 2, 0};
     REQUIRE(encountered_values == expected_values);
     REQUIRE(encountered_ls == expected_ls);
-    std::free(v);
+    delete[] v;
   }
 
   {
     const mgard::TensorMeshHierarchy<2, float> hierarchy({3, 5});
     const std::size_t ndof = hierarchy.ndof();
-    float *const v = static_cast<float *>(std::malloc(ndof * sizeof(float)));
+    float *const v = new float[ndof];
     mgard::shuffle(hierarchy, buffer, v);
     std::vector<float> encountered;
     // For the indices.
@@ -446,13 +448,13 @@ TEST_CASE("node iteration", "[TensorMeshHierarchy]") {
     const std::vector<float> expected = {1, 3, 5, 11, 13, 15};
     REQUIRE(encountered == expected);
     REQUIRE(tracker);
-    std::free(v);
+    delete[] v;
   }
 
   {
     const mgard::TensorMeshHierarchy<2, float> hierarchy({9, 3});
     const std::size_t ndof = hierarchy.ndof();
-    float *const v = static_cast<float *>(std::malloc(ndof * sizeof(float)));
+    float *const v = new float[ndof];
     mgard::shuffle(hierarchy, buffer, v);
     std::vector<float> encountered;
     // For the indices.
@@ -465,13 +467,13 @@ TEST_CASE("node iteration", "[TensorMeshHierarchy]") {
     const std::vector<float> expected = {1, 3, 7, 9, 13, 15, 19, 21, 25, 27};
     REQUIRE(encountered == expected);
     REQUIRE(tracker);
-    std::free(v);
+    delete[] v;
   }
 
   {
     const mgard::TensorMeshHierarchy<3, float> hierarchy({3, 3, 3});
     const std::size_t ndof = hierarchy.ndof();
-    float *const v = static_cast<float *>(std::malloc(ndof * sizeof(float)));
+    float *const v = new float[ndof];
     mgard::shuffle(hierarchy, buffer, v);
     float expected_value = 1;
     TrialTracker tracker;
@@ -489,13 +491,13 @@ TEST_CASE("node iteration", "[TensorMeshHierarchy]") {
     }
     REQUIRE(tracker);
     REQUIRE(encountered_ls == expected_ls);
-    std::free(v);
+    delete[] v;
   }
 
   {
     const mgard::TensorMeshHierarchy<2, float> hierarchy({11, 14});
     const std::size_t ndof = hierarchy.ndof();
-    float *const v = static_cast<float *>(std::malloc(ndof * sizeof(float)));
+    float *const v = new float[ndof];
     mgard::shuffle(hierarchy, buffer, v);
     std::vector<std::array<std::size_t, 2>> encountered_multiindices;
     std::vector<std::size_t> encountered_ls;
@@ -515,10 +517,10 @@ TEST_CASE("node iteration", "[TensorMeshHierarchy]") {
                                                   2, 2, 0, 2, 1, 2, 0};
     REQUIRE(encountered_multiindices == expected_multiindices);
     REQUIRE(encountered_ls == expected_ls);
-    std::free(v);
+    delete[] v;
   }
 
-  std::free(buffer);
+  delete[] buffer;
 }
 
 TEST_CASE("dates of birth", "[TensorMeshHierarchy]") {
@@ -564,5 +566,104 @@ TEST_CASE("dates of birth", "[TensorMeshHierarchy]") {
       tracker += hierarchy.date_of_birth({1, 0, 7}) == 3;
     }
     REQUIRE(tracker);
+  }
+}
+
+namespace {
+
+template <std::size_t N>
+void check_cartesian_topology(const mgard::pb::Domain &domain,
+                              const std::array<std::size_t, N> &shape) {
+  REQUIRE(domain.topology() == mgard::pb::Domain::CARTESIAN_GRID);
+  REQUIRE(domain.topology_definition_case() ==
+          mgard::pb::Domain::kCartesianGridTopology);
+  const mgard::pb::CartesianGridTopology &cgt =
+      domain.cartesian_grid_topology();
+  REQUIRE(cgt.dimension() == N);
+  const google::protobuf::RepeatedField<google::protobuf::uint64> &shape_ =
+      cgt.shape();
+  REQUIRE(shape_.size() == N);
+  REQUIRE(std::equal(shape_.begin(), shape_.end(), shape.begin()));
+}
+
+void check_decomposition_hierarchy(const mgard::pb::Header &header) {
+  REQUIRE(header.function_decomposition().hierarchy() ==
+          mgard::pb::FunctionDecomposition::POWER_OF_TWO_PLUS_ONE);
+}
+
+} // namespace
+
+TEST_CASE("header field population", "[TensorMeshHierarchy]") {
+  {
+    mgard::pb::Header header;
+    const std::array<std::size_t, 1> shape{123};
+    const mgard::TensorMeshHierarchy<1, float> hierarchy(shape);
+    hierarchy.populate(header);
+
+    const mgard::pb::Domain &domain = header.domain();
+    check_cartesian_topology(domain, shape);
+
+    REQUIRE(domain.geometry() == mgard::pb::Domain::UNIT_CUBE);
+    REQUIRE(domain.geometry_definition_case() ==
+            mgard::pb::Domain::GEOMETRY_DEFINITION_NOT_SET);
+
+    const mgard::pb::Dataset &dataset = header.dataset();
+    REQUIRE(dataset.type() == mgard::pb::Dataset::FLOAT);
+    REQUIRE(dataset.dimension() == 1);
+
+    check_decomposition_hierarchy(header);
+  }
+  {
+    mgard::pb::Header header;
+    const std::array<std::size_t, 3> shape{5, 5, 4};
+    std::array<std::vector<double>, 3> coordinates;
+    coordinates.at(0) = {0, 0.2, 0.3, 0.5, 0.6};
+    coordinates.at(1) = {20.5, 21.5, 22.5, 23, 23.5};
+    coordinates.at(2) = {0, 1, 2, 3};
+    // Expected flattened (as a single array) coordinates.
+    std::vector<double> efc;
+    efc.resize(std::accumulate(shape.begin(), shape.end(), 0));
+    {
+      std::vector<double>::iterator p = efc.begin();
+      for (const std::vector<double> &xs : coordinates) {
+        std::copy(xs.begin(), xs.end(), p);
+        p += xs.size();
+      }
+    }
+    const mgard::TensorMeshHierarchy<3, double> hierarchy(shape, coordinates);
+    hierarchy.populate(header);
+
+    const mgard::pb::Domain &domain = header.domain();
+    check_cartesian_topology(domain, shape);
+
+    REQUIRE(domain.geometry() == mgard::pb::Domain::EXPLICIT_CUBE);
+    REQUIRE(domain.geometry_definition_case() ==
+            mgard::pb::Domain::kExplicitCubeGeometry);
+    const mgard::pb::ExplicitCubeGeometry &ecg =
+        domain.explicit_cube_geometry();
+    const google::protobuf::RepeatedField<double> &coordinates_ =
+        ecg.coordinates();
+    REQUIRE(std::equal(coordinates_.begin(), coordinates_.end(), efc.begin()));
+
+    const mgard::pb::Dataset &dataset = header.dataset();
+    REQUIRE(dataset.type() == mgard::pb::Dataset::DOUBLE);
+    REQUIRE(dataset.dimension() == 1);
+
+    check_decomposition_hierarchy(header);
+  }
+
+  // Check that we don't lose fields that were set to start with (that we don't
+  // set in `TensorMeshHierarchy::populate`).
+  {
+    mgard::pb::Header header;
+    header.mutable_domain()->set_geometry(mgard::pb::Domain::EXPLICIT_CUBE);
+    header.mutable_error_control()->set_norm(mgard::pb::ErrorControl::S_NORM);
+    header.mutable_quantization()->set_type(mgard::pb::Quantization::INT32_T);
+
+    const mgard::TensorMeshHierarchy<2, double> hierarchy({10, 9});
+    hierarchy.populate(header);
+    REQUIRE(header.domain().geometry() == mgard::pb::Domain::UNIT_CUBE);
+    REQUIRE(header.error_control().norm() == mgard::pb::ErrorControl::S_NORM);
+    REQUIRE(header.quantization().type() == mgard::pb::Quantization::INT32_T);
   }
 }

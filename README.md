@@ -12,7 +12,7 @@ We encourage you to [make a GitHub issue][issue form] if you run into any proble
 ## Building and Installing
 
 To build and install MGARD, run the following from the root of the repository.
-You will need [CMake][cmake].
+You will need [CMake][cmake] and [Protobuf][protobuf].
 
 ```console
 $ cmake -S . -B build -D CMAKE_INSTALL_PREFIX=<location to install MGARD>
@@ -21,12 +21,7 @@ $ cmake --install build
 ```
 
 [cmake]: https://cmake.org/
-
-### GPU Acceleration
-
-Detailed instructions for using MGARD with GPU acceleration can be found [here][gpu instructions].
-
-[gpu instructions]: doc/MGARD-GPU.md
+[protobuf]: https://opensource.google/projects/protobuf
 
 ### Documentation
 
@@ -59,14 +54,35 @@ See [the examples directory][examples] for a basic example.
 
 ## Command Line Interface
 
-Assuming the dependencies are met, a convenience executable called `mgard` will be built and installed.
-*This executable is an experimental part of the API.*
-You can get help with it by running the following commands.
+To build the command line interface, run `cmake` with `-D MGARD_ENABLE_CLI=ON`.
+You will need [TCLAP][tclap].
+A convenience executable called `mgard` will be built and installed to `${CMAKE_INSTALL_PREFIX}/bin/` by default.
+You can get help with the CLI by running the following commands.
 
 ```console
 $ mgard --help
 $ man mgard
 ```
+
+*This executable is an experimental part of the API.*
+
+[tclap]: http://tclap.sourceforge.net/
+
+## Accelerated and portable compression
+MGARD-X is designed for portable compression on NVIDIA GPUs, AMD GPUs, and CPUs. See detailed user guide in [here][mgard_x instructions].
+
+[mgard_x instructions]: doc/MGARD-X.md
+
+## CUDA accelerated compression
+MGARD-GPU is designed for accelerating compression specifically using NVIDIA GPUs. See detailed user guide in [here][gpu instructions].
+
+[gpu instructions]: doc/MGARD-GPU.md
+
+## Fine-grain progressive data reconstruction
+MDR and MDR-X are designed for enabling fine-grain data refactoring and progressive data reconstruction. See detailed user guide in [here][mdr_x instructions].
+
+[mdr_x instructions]: doc/MDR-X.md
+
 
 ## References
 

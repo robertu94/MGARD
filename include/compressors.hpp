@@ -4,38 +4,42 @@
 //!\brief Lossless compressors for quantized multilevel coefficients.
 
 #include <cstddef>
-#include <cstdint>
 
-#include <vector>
+// For `z_const`.
+#include <zlib.h>
+
+#include <memory>
+
+#include "proto/mgard.pb.h"
+
+#include "utilities.hpp"
 
 namespace mgard {
 
 //! Compress an array using a Huffman tree.
 //!
-//!\param[in] qv Array to be compressed.
-//!\param[out] outsize Size in bytes of the compressed array.
-//!
-//!\return Compressed array.
-unsigned char *compress_memory_huffman(const std::vector<long int> &qv,
-                                       std::size_t &outsize);
+//!\param[in] src Array to be compressed.
+//!\param[in] srcLen Size of array (number of elements) to be compressed.
+MemoryBuffer<unsigned char> compress_memory_huffman(long int *const src,
+                                                    const std::size_t srcLen);
 
 //! Decompress an array compressed with `compress_memory_huffman`.
 //!
-//!\param[in] data Compressed array.
-//!\param[in] data_len Size in bytes of the compressed array.
-//!\param[out] out_data Decompressed array.
-//!\param[in] outsize Size in bytes of the decompressed array.
-void decompress_memory_huffman(unsigned char *data, const std::size_t data_len,
-                               long int *out_data, const std::size_t outsize);
+//!\param[in] src Compressed array.
+//!\param[in] srcLen Size in bytes of the compressed array.
+//!\param[out] dst Decompressed array.
+//!\param[in] dstLen Size in bytes of the decompressed array.
+void decompress_memory_huffman(unsigned char *const src,
+                               const std::size_t srcLen, long int *const dst,
+                               const std::size_t dstLen);
 
 #ifdef MGARD_ZSTD
 //! Compress an array using `zstd`.
 //!
-//!\param[in] in_data Array to be compressed.
-//!\param[in] in_data_size Size in bytes of the array to be compressed.
-//!\param[out] out_data Compressed array.
-void compress_memory_zstd(void *const in_data, const std::size_t in_data_size,
-                          std::vector<std::uint8_t> &out_data);
+//!\param[in] src Array to be compressed.
+//!\param[in] srcLen Size in bytes of the array to be compressed.
+MemoryBuffer<unsigned char> compress_memory_zstd(void const *const src,
+                                                 const std::size_t srcLen);
 
 //! Decompress an array compressed with `compress_memory_zstd`.
 //!
@@ -43,17 +47,16 @@ void compress_memory_zstd(void *const in_data, const std::size_t in_data_size,
 //!\param[in] srcLen Size in bytes of the compressed array.
 //!\param[out] dst Decompressed array.
 //!\param[in] dstLen Size in bytes of the decompressed array.
-void decompress_memory_zstd(void *const src, const std::size_t srcLen,
+void decompress_memory_zstd(void const *const src, const std::size_t srcLen,
                             unsigned char *const dst, const std::size_t dstLen);
 #endif
 
 //! Compress an array using `zlib`.
 //!
-//!\param in_data Array to be compressed.
-//!\param in_data_size Size in bytes of the array to be compressed.
-//!\param out_data Compressed array.
-void compress_memory_z(void *const in_data, const std::size_t in_data_size,
-                       std::vector<std::uint8_t> &out_data);
+//!\param src Array to be compressed.
+//!\param srcLen Size in bytes of the array to be compressed.
+MemoryBuffer<unsigned char> compress_memory_z(void z_const *const src,
+                                              const std::size_t srcLen);
 
 //! Decompress an array with `compress_memory_z`.
 //!
@@ -61,8 +64,31 @@ void compress_memory_z(void *const in_data, const std::size_t in_data_size,
 //!\param srcLen Size in bytes of the compressed array data
 //!\param dst Decompressed array.
 //!\param dstLen Size in bytes of the decompressed array.
-void decompress_memory_z(void *const src, const std::size_t srcLen,
+void decompress_memory_z(void z_const *const src, const std::size_t srcLen,
                          unsigned char *const dst, const std::size_t dstLen);
+
+//! Compress an array of quantized multilevel coefficients.
+//!
+//! `src` must have the correct alignment for the quantization type.
+//!
+//!\param[in] header Header for the self-describing buffer.
+//!\param[in] src Array of quantized multilevel coefficients.
+//!\param[in] srcLen Size in bytes of the input array.
+MemoryBuffer<unsigned char> compress(const pb::Header &header, void *const src,
+                                     const std::size_t srcLen);
+
+//! Decompress an array of quantized multilevel coefficients.
+//!
+//! `dst` must have the correct alignment for the quantization type.
+//!
+//!\param[in] header Header parsed from the original self-describing buffer.
+//!\param[in] src Compressed array of quantized multilevel coefficients.
+//!\param[in] srcLen Size in bytes of the compressed array.
+//!\param[out] dst Decompressed array.
+//!\param[in] dstLen Size in bytes of the decompressed array.
+void decompress(const pb::Header &header, void *const src,
+                const std::size_t srcLen, void *const dst,
+                const std::size_t dstLen);
 
 } // namespace mgard
 

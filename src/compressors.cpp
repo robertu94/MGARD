@@ -1,26 +1,31 @@
 #include "compressors.hpp"
 
-#include <algorithm>
-#include <bitset>
 #include <cassert>
 #include <cmath>
 #include <cstring>
-#include <iostream>
+
+#include <algorithm>
+#include <bitset>
+#include <numeric>
 #include <queue>
+#include <stdexcept>
 #include <vector>
+
+#include <zlib.h>
+
+#include "format.hpp"
 
 #ifdef MGARD_TIMING
 #include <chrono>
 #include <iostream>
 #endif
 
-#include <zlib.h>
-
 #ifdef MGARD_ZSTD
 #include <zstd.h>
 #endif
 
 namespace mgard {
+
 const int nql = 32768 * 4;
 
 struct htree_node {
@@ -175,8 +180,6 @@ huffman_codec *build_huffman_codec(long int *quantized_data, size_t **ft,
   return codec;
 }
 
-namespace {
-
 void huffman_decoding(long int *quantized_data,
                       const std::size_t quantized_data_size,
                       unsigned char *out_data_hit, size_t out_data_hit_size,
@@ -268,10 +271,9 @@ void huffman_decoding(long int *quantized_data,
   ft = 0;
 }
 
-} // namespace
-
-void decompress_memory_huffman(unsigned char *data, const std::size_t data_len,
-                               long int *out_data, const std::size_t out_size) {
+void decompress_memory_huffman(unsigned char *const src,
+                               const std::size_t srcLen, long int *const dst,
+                               const std::size_t dstLen) {
   unsigned char *out_data_hit = 0;
   size_t out_data_hit_size;
   unsigned char *out_data_miss = 0;
@@ -279,7 +281,7 @@ void decompress_memory_huffman(unsigned char *data, const std::size_t data_len,
   unsigned char *out_tree = 0;
   size_t out_tree_size;
 
-  unsigned char *buf = data;
+  unsigned char *buf = src;
 
   out_tree_size = *(size_t *)buf;
   buf += sizeof(size_t);
@@ -289,18 +291,15 @@ void decompress_memory_huffman(unsigned char *data, const std::size_t data_len,
 
   out_data_miss_size = *(size_t *)buf;
   buf += sizeof(size_t);
-#if 0
-std::cout << "decompress total len = " << data_len << " out_tree_size = " << out_tree_size << " out_data_hit_size = " << out_data_hit_size << " out_data_miss_size = " << out_data_miss_size << "\n";
-#endif
   size_t total_huffman_size =
       out_tree_size + out_data_hit_size / 8 + 4 + out_data_miss_size;
   unsigned char *huffman_encoding_p =
       (unsigned char *)malloc(total_huffman_size);
 #ifndef MGARD_ZSTD
-  decompress_memory_z(buf, data_len - 3 * sizeof(size_t), huffman_encoding_p,
+  decompress_memory_z(buf, srcLen - 3 * sizeof(size_t), huffman_encoding_p,
                       total_huffman_size);
 #else
-  decompress_memory_zstd(buf, data_len - 3 * sizeof(size_t), huffman_encoding_p,
+  decompress_memory_zstd(buf, srcLen - 3 * sizeof(size_t), huffman_encoding_p,
                          total_huffman_size);
 #endif
   out_tree = huffman_encoding_p;
@@ -308,13 +307,11 @@ std::cout << "decompress total len = " << data_len << " out_tree_size = " << out
   out_data_miss =
       huffman_encoding_p + out_tree_size + out_data_hit_size / 8 + 4;
 
-  huffman_decoding(out_data, out_size, out_data_hit, out_data_hit_size,
-                   out_data_miss, out_data_miss_size, out_tree, out_tree_size);
+  huffman_decoding(dst, dstLen, out_data_hit, out_data_hit_size, out_data_miss,
+                   out_data_miss_size, out_tree, out_tree_size);
 
   free(huffman_encoding_p);
 }
-
-namespace {
 
 void huffman_encoding(long int *quantized_data, const std::size_t n,
                       unsigned char **out_data_hit, size_t *out_data_hit_size,
@@ -370,7 +367,6 @@ void huffman_encoding(long int *quantized_data, const std::size_t n,
     // same number or (more likely) all data are outside the quantization
     // range. Either way, the code contains no information and is therefore 0
     // bits.
-    assert(len >= 0);
 
     if (32 - start_bit % 32 < len) {
       // current unsigned int cannot hold the code
@@ -422,10 +418,8 @@ void huffman_encoding(long int *quantized_data, const std::size_t n,
   codec = 0;
 }
 
-} // namespace
-
-unsigned char *compress_memory_huffman(const std::vector<long int> &qv,
-                                       std::size_t &outsize) {
+MemoryBuffer<unsigned char> compress_memory_huffman(long int *const src,
+                                                    const std::size_t srcLen) {
   unsigned char *out_data_hit = 0;
   size_t out_data_hit_size;
   unsigned char *out_data_miss = 0;
@@ -435,9 +429,9 @@ unsigned char *compress_memory_huffman(const std::vector<long int> &qv,
 #ifdef MGARD_TIMING
   auto huff_time1 = std::chrono::high_resolution_clock::now();
 #endif
-  huffman_encoding(const_cast<long int *>(qv.data()), qv.size(), &out_data_hit,
-                   &out_data_hit_size, &out_data_miss, &out_data_miss_size,
-                   &out_tree, &out_tree_size);
+  huffman_encoding(src, srcLen, &out_data_hit, &out_data_hit_size,
+                   &out_data_miss, &out_data_miss_size, &out_tree,
+                   &out_tree_size);
 #ifdef MGARD_TIMING
   auto huff_time2 = std::chrono::high_resolution_clock::now();
   auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -467,12 +461,12 @@ unsigned char *compress_memory_huffman(const std::vector<long int> &qv,
   free(out_data_hit);
   free(out_data_miss);
 
-  std::vector<unsigned char> out_data;
 #ifndef MGARD_ZSTD
 #ifdef MGARD_TIMING
   auto z_time1 = std::chrono::high_resolution_clock::now();
 #endif
-  compress_memory_z(payload, total_size, out_data);
+  const MemoryBuffer<unsigned char> out_data =
+      compress_memory_z(payload, total_size);
 #ifdef MGARD_TIMING
   auto z_time2 = std::chrono::high_resolution_clock::now();
   auto z_duration =
@@ -484,7 +478,8 @@ unsigned char *compress_memory_huffman(const std::vector<long int> &qv,
 #ifdef MGARD_TIMING
   auto zstd_time1 = std::chrono::high_resolution_clock::now();
 #endif
-  compress_memory_zstd(payload, total_size, out_data);
+  const MemoryBuffer<unsigned char> out_data =
+      compress_memory_zstd(payload, total_size);
 #ifdef MGARD_TIMING
   auto zstd_time2 = std::chrono::high_resolution_clock::now();
   auto zstd_duration = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -496,8 +491,8 @@ unsigned char *compress_memory_huffman(const std::vector<long int> &qv,
   free(payload);
   payload = 0;
 
-  outsize = out_data.size() + 3 * sizeof(size_t);
-  unsigned char *const buffer = new unsigned char[outsize];
+  const std::size_t bufferLen = 3 * sizeof(size_t) + out_data.size;
+  unsigned char *const buffer = new unsigned char[bufferLen];
 
   bufp = buffer;
   *(size_t *)bufp = out_tree_size;
@@ -509,12 +504,11 @@ unsigned char *compress_memory_huffman(const std::vector<long int> &qv,
   *(size_t *)bufp = out_data_miss_size;
   bufp += sizeof(size_t);
 
-  std::copy(out_data.begin(), out_data.end(), bufp);
-#if 0
-std::cout << "outsize = " << outsize << " out_tree_size = " <<
-out_tree_size << " out_data_hit_size = " << out_data_hit_size << " out_data_miss_size = " << out_data_miss_size << "\n";
-#endif
-  return buffer;
+  {
+    unsigned char const *const p = out_data.data.get();
+    std::copy(p, p + out_data.size, bufp);
+  }
+  return MemoryBuffer<unsigned char>(buffer, bufferLen);
 }
 
 #ifdef MGARD_ZSTD
@@ -545,37 +539,29 @@ out_tree_size << " out_data_hit_size = " << out_data_hit_size << " out_data_miss
     CHECK(!ZSTD_isError(err), "%s", ZSTD_getErrorName(err));                   \
   } while (0)
 
-void compress_memory_zstd(void *const in_data, const std::size_t in_data_size,
-                          std::vector<std::uint8_t> &out_data) {
-  size_t const cBuffSize = ZSTD_compressBound(in_data_size);
-  uint8_t *cBuff = (uint8_t *)malloc(cBuffSize);
-
-  assert(cBuff);
-
-  size_t const cSize =
-      ZSTD_compress(cBuff, cBuffSize, in_data, in_data_size, 1);
+MemoryBuffer<unsigned char> compress_memory_zstd(void const *const src,
+                                                 const std::size_t srcLen) {
+  const size_t cBuffSize = ZSTD_compressBound(srcLen);
+  unsigned char *const buffer = new unsigned char[cBuffSize];
+  const std::size_t cSize = ZSTD_compress(buffer, cBuffSize, src, srcLen, 1);
   CHECK_ZSTD(cSize);
-
-  std::copy(cBuff, cBuff + cSize, back_inserter(out_data));
-
-  free(cBuff);
+  return MemoryBuffer<unsigned char>(buffer, cSize);
 }
 #endif
 
-void compress_memory_z(void *const in_data, const std::size_t in_data_size,
-                       std::vector<std::uint8_t> &out_data) {
-  std::vector<std::uint8_t> buffer;
-
+MemoryBuffer<unsigned char> compress_memory_z(void z_const *const src,
+                                              const std::size_t srcLen) {
   const std::size_t BUFSIZE = 2048 * 1024;
-  std::uint8_t temp_buffer[BUFSIZE];
+  std::vector<Bytef *> buffers;
+  std::vector<std::size_t> bufferLengths;
 
   z_stream strm;
   strm.zalloc = Z_NULL;
   strm.zfree = Z_NULL;
-  strm.next_in = static_cast<std::uint8_t *>(in_data);
-  strm.avail_in = in_data_size;
-  strm.next_out = temp_buffer;
-  strm.avail_out = BUFSIZE;
+  strm.next_in = static_cast<Bytef z_const *>(src);
+  strm.avail_in = srcLen;
+  buffers.push_back(strm.next_out = new Bytef[BUFSIZE]);
+  bufferLengths.push_back(strm.avail_out = BUFSIZE);
 
   deflateInit(&strm, Z_BEST_COMPRESSION);
 
@@ -583,36 +569,48 @@ void compress_memory_z(void *const in_data, const std::size_t in_data_size,
     [[maybe_unused]] const int res = deflate(&strm, Z_NO_FLUSH);
     assert(res == Z_OK);
     if (strm.avail_out == 0) {
-      buffer.insert(buffer.end(), temp_buffer, temp_buffer + BUFSIZE);
-      strm.next_out = temp_buffer;
-      strm.avail_out = BUFSIZE;
+      buffers.push_back(strm.next_out = new Bytef[BUFSIZE]);
+      bufferLengths.push_back(strm.avail_out = BUFSIZE);
     }
   }
 
   int res = Z_OK;
   while (res == Z_OK) {
     if (strm.avail_out == 0) {
-      buffer.insert(buffer.end(), temp_buffer, temp_buffer + BUFSIZE);
-      strm.next_out = temp_buffer;
-      strm.avail_out = BUFSIZE;
+      buffers.push_back(strm.next_out = new Bytef[BUFSIZE]);
+      bufferLengths.push_back(strm.avail_out = BUFSIZE);
     }
     res = deflate(&strm, Z_FINISH);
   }
 
   assert(res == Z_STREAM_END);
-  buffer.insert(buffer.end(), temp_buffer,
-                temp_buffer + BUFSIZE - strm.avail_out);
+  bufferLengths.back() -= strm.avail_out;
+  // Could just do `nbuffers * BUFSIZE - strm.avail_out`.
+  const std::size_t bufferLen =
+      std::accumulate(bufferLengths.begin(), bufferLengths.end(), 0);
+  unsigned char *const buffer = new unsigned char[bufferLen];
+  {
+    const std::size_t nbuffers = buffers.size();
+    unsigned char *p = buffer;
+    for (std::size_t i = 0; i < nbuffers; ++i) {
+      unsigned char const *const buffer = buffers.at(i);
+      const std::size_t bufferLength = bufferLengths.at(i);
+      std::copy(buffer, buffer + bufferLength, p);
+      p += bufferLength;
+      delete[] buffer;
+    }
+  }
   deflateEnd(&strm);
 
-  out_data.swap(buffer);
+  return MemoryBuffer<unsigned char>(buffer, bufferLen);
 }
 
-void decompress_memory_z(void *const src, const std::size_t srcLen,
+void decompress_memory_z(void z_const *const src, const std::size_t srcLen,
                          unsigned char *const dst, const std::size_t dstLen) {
   z_stream strm = {};
   strm.total_in = strm.avail_in = srcLen;
   strm.total_out = strm.avail_out = dstLen;
-  strm.next_in = static_cast<Bytef *>(src);
+  strm.next_in = static_cast<Bytef z_const *>(src);
   strm.next_out = reinterpret_cast<Bytef *>(dst);
 
   strm.zalloc = Z_NULL;
@@ -631,7 +629,7 @@ void decompress_memory_z(void *const src, const std::size_t srcLen,
 }
 
 #ifdef MGARD_ZSTD
-void decompress_memory_zstd(void *const src, const std::size_t srcLen,
+void decompress_memory_zstd(void const *const src, const std::size_t srcLen,
                             unsigned char *const dst,
                             const std::size_t dstLen) {
   size_t const dSize = ZSTD_decompress(dst, dstLen, src, srcLen);
@@ -641,5 +639,65 @@ void decompress_memory_zstd(void *const src, const std::size_t srcLen,
   CHECK(dstLen == dSize, "Impossible because zstd will check this condition!");
 }
 #endif
+
+MemoryBuffer<unsigned char> compress(const pb::Header &header, void *const src,
+                                     const std::size_t srcLen) {
+  switch (header.encoding().compressor()) {
+  case pb::Encoding::CPU_HUFFMAN_ZSTD:
+#ifdef MGARD_ZSTD
+  {
+    if (header.quantization().type() != mgard::pb::Quantization::INT64_T) {
+      throw std::runtime_error("Huffman tree not implemented for quantization "
+                               "types other than `std::int64_t`");
+    }
+    // Quantization type size.
+    const std::size_t qts = quantization_buffer(header, 1).size;
+    if (srcLen % qts) {
+      throw std::runtime_error("incorrect quantization buffer size");
+    }
+    return compress_memory_huffman(reinterpret_cast<long int *>(src),
+                                   srcLen / qts);
+  }
+#else
+    throw std::runtime_error("MGARD compiled without ZSTD support");
+#endif
+  case pb::Encoding::CPU_HUFFMAN_ZLIB:
+    return compress_memory_z(src, srcLen);
+  default:
+    throw std::runtime_error("unrecognized lossless compressor");
+  }
+}
+
+void decompress(const pb::Header &header, void *const src,
+                const std::size_t srcLen, void *const dst,
+                const std::size_t dstLen) {
+  switch (read_encoding_compressor(header)) {
+  case pb::Encoding::NOOP_COMPRESSOR:
+    if (srcLen != dstLen) {
+      throw std::invalid_argument(
+          "source and destination lengths must be equal");
+    }
+    {
+      unsigned char const *const p = static_cast<unsigned char const *>(src);
+      unsigned char *const q = static_cast<unsigned char *>(dst);
+      std::copy(p, p + srcLen, q);
+    }
+    break;
+  case pb::Encoding::CPU_HUFFMAN_ZLIB:
+    decompress_memory_z(const_cast<void z_const *>(src), srcLen,
+                        static_cast<unsigned char *>(dst), dstLen);
+    break;
+  case pb::Encoding::CPU_HUFFMAN_ZSTD:
+#ifdef MGARD_ZSTD
+    decompress_memory_huffman(static_cast<unsigned char *>(src), srcLen,
+                              static_cast<long int *>(dst), dstLen);
+    break;
+#else
+    throw std::runtime_error("MGARD compiled without ZSTD support");
+#endif
+  default:
+    throw std::runtime_error("unsupported lossless encoder");
+  }
+}
 
 } // namespace mgard

@@ -1,15 +1,20 @@
 /*
  * Copyright 2021, Oak Ridge National Laboratory.
+<<<<<<< HEAD
+ * MGARD-X: MultiGrid Adaptive Reduction of Data Portable across GPUs and CPUs
+ * Author: Jieyang Chen (chenj3@ornl.gov)
+ * Date: December 1, 2021
+=======
  * MGARD-GPU: MultiGrid Adaptive Reduction of Data Accelerated by GPUs
  * Author: Jieyang Chen (chenj3@ornl.gov)
  * Date: April 2, 2021
+>>>>>>> Add legacy CUDA code
  */
 
 #include <algorithm>
 
-#include "cuda/CommonInternal.h"
-
 #include "cuda/Array.h"
+#include "cuda/CommonInternal.h"
 
 namespace mgard_cuda {
 

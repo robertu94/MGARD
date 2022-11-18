@@ -46,7 +46,9 @@
 // #define ROUND_UP_WARP(TID) ((TID) + WARP_SIZE - 1) / WARP_SIZE
 
 #define gpuErrchk(ans)                                                         \
-  { gpuAssert((ans), __FILE__, __LINE__); }
+  { mgard_cuda::gpuAssert((ans), __FILE__, __LINE__); }
+
+namespace mgard_cuda {
 
 inline void gpuAssert(cudaError_t code, const char *file, int line,
                       bool abort = true) {
@@ -57,8 +59,6 @@ inline void gpuAssert(cudaError_t code, const char *file, int line,
       exit(code);
   }
 }
-
-namespace mgard_cuda {
 
 template <class T> struct SharedMemory {
   __device__ inline operator T *() {

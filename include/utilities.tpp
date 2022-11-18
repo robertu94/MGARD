@@ -332,4 +332,17 @@ void check_dimension_index_bounds(const std::size_t dimension) {
   }
 }
 
+template <typename T>
+MemoryBuffer<T>::MemoryBuffer(std::unique_ptr<T[]> &&data,
+                              const std::size_t size)
+    : data(std::move(data)), size(size) {}
+
+template <typename T>
+MemoryBuffer<T>::MemoryBuffer(T *const buffer, const std::size_t size)
+    : MemoryBuffer(std::unique_ptr<T[]>(buffer), size) {}
+
+template <typename T>
+MemoryBuffer<T>::MemoryBuffer(const std::size_t size)
+    : MemoryBuffer(new T[size], size) {}
+
 } // namespace mgard

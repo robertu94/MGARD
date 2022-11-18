@@ -5,42 +5,216 @@
  * Date: September 27, 2021
  */
 
-#include "compressors.hpp"
+// #include "compressors.hpp"
 #include "cuda/Common.h"
 #include "cuda/CommonInternal.h"
 #include "cuda/LosslessCompression.h"
 #include "cuda/ParallelHuffman/huffman_workflow.cuh"
 #include <typeinfo>
+#include <zstd.h>
+
+namespace mgard {
+void huffman_encoding(long int *quantized_data, const std::size_t n,
+                      unsigned char **out_data_hit, size_t *out_data_hit_size,
+                      unsigned char **out_data_miss, size_t *out_data_miss_size,
+                      unsigned char **out_tree, size_t *out_tree_size);
+void huffman_decoding(long int *quantized_data,
+                      const std::size_t quantized_data_size,
+                      unsigned char *out_data_hit, size_t out_data_hit_size,
+                      unsigned char *out_data_miss, size_t out_data_miss_size,
+                      unsigned char *out_tree, size_t out_tree_size);
+} // namespace mgard
 
 namespace mgard_cuda {
 
+/*! CHECK
+ * Check that the condition holds. If it doesn't print a message and die.
+ */
+#define CHECK(cond, ...)                                                       \
+  do {                                                                         \
+    if (!(cond)) {                                                             \
+      fprintf(stderr, "%s:%d CHECK(%s) failed: ", __FILE__, __LINE__, #cond);  \
+      fprintf(stderr, "" __VA_ARGS__);                                         \
+      fprintf(stderr, "\n");                                                   \
+      exit(1);                                                                 \
+    }                                                                          \
+  } while (0)
+
+/*! CHECK_ZSTD
+ * Check the zstd error code and die if an error occurred after printing a
+ * message.
+ */
+/*! CHECK_ZSTD
+ * Check the zstd error code and die if an error occurred after printing a
+ * message.
+ */
+#define CHECK_ZSTD(fn, ...)                                                    \
+  do {                                                                         \
+    size_t const err = (fn);                                                   \
+    CHECK(!ZSTD_isError(err), "%s", ZSTD_getErrorName(err));                   \
+  } while (0)
+
+unsigned char *compress_memory_huffman(long int *const src,
+                                       const std::size_t srcLen,
+                                       std::size_t outsize) {
+  unsigned char *out_data_hit = 0;
+  size_t out_data_hit_size;
+  unsigned char *out_data_miss = 0;
+  size_t out_data_miss_size;
+  unsigned char *out_tree = 0;
+  size_t out_tree_size;
+  mgard::huffman_encoding(src, srcLen, &out_data_hit, &out_data_hit_size,
+                          &out_data_miss, &out_data_miss_size, &out_tree,
+                          &out_tree_size);
+
+  const size_t total_size =
+      out_data_hit_size / 8 + 4 + out_data_miss_size + out_tree_size;
+  unsigned char *payload = (unsigned char *)malloc(total_size);
+  unsigned char *bufp = payload;
+
+  if (out_tree_size) {
+    std::memcpy(bufp, out_tree, out_tree_size);
+    bufp += out_tree_size;
+  }
+
+  std::memcpy(bufp, out_data_hit, out_data_hit_size / 8 + 4);
+  bufp += out_data_hit_size / 8 + 4;
+
+  if (out_data_miss_size) {
+    std::memcpy(bufp, out_data_miss, out_data_miss_size);
+    bufp += out_data_miss_size;
+  }
+
+  free(out_tree);
+  free(out_data_hit);
+  free(out_data_miss);
+
+  // const MemoryBuffer<unsigned char> out_data =
+  //     compress_memory_zstd(payload, total_size);
+
+  const size_t cBuffSize = ZSTD_compressBound(total_size);
+  unsigned char *const zstd_buffer = new unsigned char[cBuffSize];
+  const std::size_t cSize =
+      ZSTD_compress(zstd_buffer, cBuffSize, payload, total_size, 1);
+  CHECK_ZSTD(cSize);
+  // return MemoryBuffer<unsigned char>(buffer, cSize);
+
+  free(payload);
+  payload = 0;
+
+  const std::size_t bufferLen = 3 * sizeof(size_t) + cSize;
+  unsigned char *const buffer = new unsigned char[bufferLen];
+  outsize = bufferLen;
+
+  bufp = buffer;
+  *(size_t *)bufp = out_tree_size;
+  bufp += sizeof(size_t);
+
+  *(size_t *)bufp = out_data_hit_size;
+  bufp += sizeof(size_t);
+
+  *(size_t *)bufp = out_data_miss_size;
+  bufp += sizeof(size_t);
+
+  {
+    unsigned char const *const p = zstd_buffer;
+    std::copy(p, p + cSize, bufp);
+  }
+  // return MemoryBuffer<unsigned char>(buffer, bufferLen);
+  return buffer;
+}
+
+void decompress_memory_huffman(unsigned char *const src,
+                               const std::size_t srcLen, long int *const dst,
+                               const std::size_t dstLen) {
+  unsigned char *out_data_hit = 0;
+  size_t out_data_hit_size;
+  unsigned char *out_data_miss = 0;
+  size_t out_data_miss_size;
+  unsigned char *out_tree = 0;
+  size_t out_tree_size;
+
+  unsigned char *buf = src;
+
+  out_tree_size = *(size_t *)buf;
+  buf += sizeof(size_t);
+
+  out_data_hit_size = *(size_t *)buf;
+  buf += sizeof(size_t);
+
+  out_data_miss_size = *(size_t *)buf;
+  buf += sizeof(size_t);
+  size_t total_huffman_size =
+      out_tree_size + out_data_hit_size / 8 + 4 + out_data_miss_size;
+  unsigned char *huffman_encoding_p =
+      (unsigned char *)malloc(total_huffman_size);
+  // decompress_memory_zstd(buf, srcLen - 3 * sizeof(size_t),
+  // huffman_encoding_p,
+  //                        total_huffman_size);
+
+  size_t const dSize = ZSTD_decompress(huffman_encoding_p, total_huffman_size,
+                                       buf, srcLen - 3 * sizeof(size_t));
+  CHECK_ZSTD(dSize);
+
+  /* When zstd knows the content size, it will error if it doesn't match. */
+  CHECK(dstLen == dSize, "Impossible because zstd will check this condition!");
+
+  out_tree = huffman_encoding_p;
+  out_data_hit = huffman_encoding_p + out_tree_size;
+  out_data_miss =
+      huffman_encoding_p + out_tree_size + out_data_hit_size / 8 + 4;
+
+  mgard::huffman_decoding(dst, dstLen, out_data_hit, out_data_hit_size,
+                          out_data_miss, out_data_miss_size, out_tree,
+                          out_tree_size);
+
+  free(huffman_encoding_p);
+}
+
 template <uint32_t D, typename T, typename C>
-void cascaded_compress(Handle<D, T> &handle, C *input_data, size_t intput_count,
+void cascaded_compress(Handle<D, T> &handle, C *input_data, size_t input_count,
                        void *&output_data, size_t &output_size, int n_rle,
                        int n_de, bool bitpack, int queue_idx) {
 
-  nvcomp::CascadedCompressor compressor(nvcomp::TypeOf<C>(), n_rle, n_de,
-                                        bitpack);
+  // nvcomp::CascadedCompressor compressor(nvcomp::TypeOf<C>(), n_rle, n_de,
+  //                                       bitpack);
 
-  size_t *temp_bytes;
-  cudaMallocHostHelper((void **)&temp_bytes, sizeof(size_t));
-  size_t *output_bytes;
-  cudaMallocHostHelper((void **)&output_bytes, sizeof(size_t));
+  nvcompBatchedCascadedOpts_t options = nvcompBatchedCascadedDefaultOpts;
+  options.type = nvcomp::TypeOf<C>();
+  options.num_RLEs = n_rle;
+  options.num_deltas = n_de;
+  options.use_bp = bitpack;
+  nvcomp::CascadedManager nvcomp_manager{
+      options, *(cudaStream_t *)handle.get(queue_idx)};
 
-  compressor.configure(intput_count * sizeof(C), temp_bytes, output_bytes);
+  // size_t *temp_bytes;
+  // cudaMallocHostHelper((void **)&temp_bytes, sizeof(size_t));
+  // size_t *output_bytes;
+  // cudaMallocHostHelper((void **)&output_bytes, sizeof(size_t));
 
-  void *temp_space;
-  cudaMallocHelper(handle, &temp_space, *temp_bytes);
-  cudaMallocHelper(handle, &output_data, *output_bytes);
+  // compressor.configure(input_count * sizeof(C), temp_bytes, output_bytes);
+  auto comp_config =
+      nvcomp_manager.configure_compression(input_count * sizeof(C));
 
-  compressor.compress_async(input_data, intput_count * sizeof(C), temp_space,
-                            *temp_bytes, output_data, output_bytes,
-                            *(cudaStream_t *)handle.get(queue_idx));
+  // void *temp_space;
+  // cudaMallocHelper(handle, &temp_space, *temp_bytes);
+  // cudaMallocHelper(handle, &output_data, *output_bytes);
+
+  cudaMalloc(&output_data, comp_config.max_compressed_buffer_size);
+
+  // compressor.compress_async(input_data, input_count * sizeof(C), temp_space,
+  //                           *temp_bytes, output_data, output_bytes,
+  //                           *(cudaStream_t *)handle.get(queue_idx));
+
+  uint8_t *output_data_uint8_t = (uint8_t *)output_data;
+  nvcomp_manager.compress((uint8_t *)input_data, output_data_uint8_t,
+                          comp_config);
+  output_size = nvcomp_manager.get_compressed_output_size(output_data_uint8_t);
   handle.sync(queue_idx);
-  output_size = *output_bytes;
-  cudaFreeHelper(temp_space);
-  cudaFreeHostHelper(temp_bytes);
-  cudaFreeHostHelper(output_bytes);
+
+  // cudaFreeHelper(temp_space);
+  // cudaFreeHostHelper(temp_bytes);
+  // cudaFreeHostHelper(output_bytes);
 }
 
 template <uint32_t D, typename T, typename C>
@@ -51,27 +225,38 @@ void cascaded_decompress(Handle<D, T> &handle, void *input_data,
   //                                      *(cudaStream_t
   //                                      *)handle.get(queue_idx));
 
-  nvcomp::CascadedDecompressor decompressor;
+  // nvcomp::CascadedDecompressor decompressor;
+  auto decomp_nvcomp_manager = nvcomp::create_manager(
+      (uint8_t *)input_data, *(cudaStream_t *)handle.get(queue_idx));
 
-  size_t *temp_bytes;
-  cudaMallocHostHelper((void **)&temp_bytes, sizeof(size_t));
-  size_t *output_bytes;
-  cudaMallocHostHelper((void **)&output_bytes, sizeof(size_t));
+  // size_t *temp_bytes;
+  // cudaMallocHostHelper((void **)&temp_bytes, sizeof(size_t));
+  // size_t *output_bytes;
+  // cudaMallocHostHelper((void **)&output_bytes, sizeof(size_t));
 
-  decompressor.configure(input_data, input_size, temp_bytes, output_bytes,
-                         *(cudaStream_t *)handle.get(queue_idx));
+  // decompressor.configure(input_data, input_size, temp_bytes, output_bytes,
+  //                        *(cudaStream_t *)handle.get(queue_idx));
+  nvcomp::DecompressionConfig decomp_config =
+      decomp_nvcomp_manager->configure_decompression((uint8_t *)input_data);
 
-  void *temp_space;
-  cudaMallocHelper(handle, (void **)&temp_space, *temp_bytes);
-  cudaMallocHelper(handle, (void **)&output_data, *output_bytes);
+  // void *temp_space;
+  // cudaMallocHelper(handle, (void **)&temp_space, *temp_bytes);
+  // cudaMallocHelper(handle, (void **)&output_data, *output_bytes);
+  cudaMalloc(&output_data, decomp_config.decomp_data_size);
 
-  decompressor.decompress_async(input_data, input_size, temp_space, *temp_bytes,
-                                output_data, *output_bytes,
-                                *(cudaStream_t *)handle.get(queue_idx));
+  uint8_t *output_data_uint8_t = (uint8_t *)output_data;
+  decomp_nvcomp_manager->decompress(output_data_uint8_t, (uint8_t *)input_data,
+                                    decomp_config);
+  // output_size = decomp_config.decomp_data_size;
   handle.sync(queue_idx);
-  cudaFreeHelper(temp_space);
-  cudaFreeHostHelper(temp_bytes);
-  cudaFreeHostHelper(output_bytes);
+  // decompressor.decompress_async(input_data, input_size, temp_space,
+  // *temp_bytes,
+  //                               output_data, *output_bytes,
+  //                               *(cudaStream_t *)handle.get(queue_idx));
+  // handle.sync(queue_idx);
+  // cudaFreeHelper(temp_space);
+  // cudaFreeHostHelper(temp_bytes);
+  // cudaFreeHostHelper(output_bytes);
 }
 
 template <uint32_t D, typename T, typename C>
@@ -79,61 +264,81 @@ void lz4_compress(Handle<D, T> &handle, C *input_data, size_t input_count,
                   void *&output_data, size_t &output_size, size_t chunk_size,
                   int queue_idx) {
   nvcompType_t dtype = NVCOMP_TYPE_UCHAR;
-  nvcomp::LZ4Compressor compressor(chunk_size, dtype);
+  // nvcomp::LZ4Compressor compressor(chunk_size, dtype);
+  nvcomp::LZ4Manager nvcomp_manager{chunk_size, dtype,
+                                    *(cudaStream_t *)handle.get(queue_idx)};
 
-  size_t *temp_bytes;
-  cudaMallocHostHelper((void **)&temp_bytes, sizeof(size_t));
-  size_t *output_bytes;
-  cudaMallocHostHelper((void **)&output_bytes, sizeof(size_t));
+  // size_t *temp_bytes;
+  // cudaMallocHostHelper((void **)&temp_bytes, sizeof(size_t));
+  // size_t *output_bytes;
+  // cudaMallocHostHelper((void **)&output_bytes, sizeof(size_t));
 
-  compressor.configure(input_count * sizeof(C), temp_bytes, output_bytes);
+  // compressor.configure(input_count * sizeof(C), temp_bytes, output_bytes);
+  nvcomp::CompressionConfig comp_config =
+      nvcomp_manager.configure_compression(input_count * sizeof(C));
 
-  void *temp_space;
-  cudaMallocHelper(handle, &temp_space, *temp_bytes);
-  cudaMallocHelper(handle, &output_data, *output_bytes);
+  // void *temp_space;
+  // cudaMallocHelper(handle, &temp_space, *temp_bytes);
+  cudaMallocHelper(handle, &output_data,
+                   comp_config.max_compressed_buffer_size);
 
-  compressor.compress_async(input_data, input_count * sizeof(C), temp_space,
-                            *temp_bytes, output_data, output_bytes,
-                            *(cudaStream_t *)handle.get(queue_idx));
+  // compressor.compress_async(input_data, input_count * sizeof(C), temp_space,
+  //                           *temp_bytes, output_data, output_bytes,
+  //                           *(cudaStream_t *)handle.get(queue_idx));
+  uint8_t *output_data_uint8_t = (uint8_t *)output_data;
+  nvcomp_manager.compress((uint8_t *)input_data, output_data_uint8_t,
+                          comp_config);
+  output_size = nvcomp_manager.get_compressed_output_size(output_data_uint8_t);
 
   handle.sync(queue_idx);
-  output_size = *output_bytes;
-  cudaFreeHelper(temp_space);
-  cudaFreeHostHelper(temp_bytes);
-  cudaFreeHostHelper(output_bytes);
+  // output_size = *output_bytes;
+  // cudaFreeHelper(temp_space);
+  // cudaFreeHostHelper(temp_bytes);
+  // cudaFreeHostHelper(output_bytes);
 }
 
 template <uint32_t D, typename T, typename C>
 void lz4_decompress(Handle<D, T> &handle, void *input_data, size_t input_size,
                     C *&output_data, size_t &output_size, int queue_idx) {
 
-  nvcomp::LZ4Decompressor decompressor;
+  auto decomp_nvcomp_manager = nvcomp::create_manager(
+      (uint8_t *)input_data, *(cudaStream_t *)handle.get(queue_idx));
 
-  size_t *temp_bytes;
-  cudaMallocHostHelper((void **)&temp_bytes, sizeof(size_t));
-  size_t *output_bytes;
-  cudaMallocHostHelper((void **)&output_bytes, sizeof(size_t));
+  // size_t *temp_bytes;
+  // cudaMallocHostHelper((void **)&temp_bytes, sizeof(size_t));
+  // size_t *output_bytes;
+  // cudaMallocHostHelper((void **)&output_bytes, sizeof(size_t));
 
-  decompressor.configure(input_data, input_size, temp_bytes, output_bytes,
-                         *(cudaStream_t *)handle.get(queue_idx));
+  // decompressor.configure(input_data, input_size, temp_bytes, output_bytes,
+  //                        *(cudaStream_t *)handle.get(queue_idx));
+  nvcomp::DecompressionConfig decomp_config =
+      decomp_nvcomp_manager->configure_decompression((uint8_t *)input_data);
 
-  void *temp_space;
-  cudaMallocHelper(handle, (void **)&temp_space, *temp_bytes);
-  cudaMallocHelper(handle, (void **)&output_data, *output_bytes);
+  // void *temp_space;
+  // cudaMallocHelper(handle, (void **)&temp_space, *temp_bytes);
+  // cudaMallocHelper(handle, (void **)&output_data, *output_bytes);
 
-  decompressor.decompress_async(input_data, input_size, temp_space, *temp_bytes,
-                                output_data, *output_bytes,
-                                *(cudaStream_t *)handle.get(queue_idx));
+  cudaMalloc(&output_data, decomp_config.decomp_data_size);
+
+  // decompressor.decompress_async(input_data, input_size, temp_space,
+  // *temp_bytes,
+  //                               output_data, *output_bytes,
+  //                               *(cudaStream_t *)handle.get(queue_idx));
+
+  uint8_t *output_data_uint8_t = (uint8_t *)output_data;
+  decomp_nvcomp_manager->decompress(output_data_uint8_t, (uint8_t *)input_data,
+                                    decomp_config);
+  output_size = decomp_config.decomp_data_size;
   handle.sync(queue_idx);
-  output_size = *output_bytes;
-  cudaFreeHelper(temp_space);
-  cudaFreeHostHelper(temp_bytes);
-  cudaFreeHostHelper(output_bytes);
+
+  // cudaFreeHelper(temp_space);
+  // cudaFreeHostHelper(temp_bytes);
+  // cudaFreeHostHelper(output_bytes);
 }
 
 #define KERNELS(D, T, C)                                                       \
   template void cascaded_compress<D, T, C>(                                    \
-      Handle<D, T> & handle, C * input_data, size_t intput_count,              \
+      Handle<D, T> & handle, C * input_data, size_t input_count,               \
       void *&output_data, size_t &output_size, int n_rle, int n_de,            \
       bool bitpack, int queue_idx);                                            \
   template void cascaded_decompress<D, T, C>(                                  \
@@ -407,8 +612,9 @@ void cpu_lossless_compression(Handle<D, T> &handle, S *input_data,
   // input_vector[i]); printf("\n"); Compress an array of data using `zstd`.
   std::size_t zstd_outsize;
 
-  void *const buffer =
-      mgard::compress_memory_huffman(input_vector, zstd_outsize);
+  unsigned char *buffer = compress_memory_huffman(
+      input_vector.data(), input_vector.size() * sizeof(long int),
+      zstd_outsize);
 
   out_data_size = zstd_outsize;
 
@@ -433,7 +639,7 @@ void cpu_lossless_decompression(Handle<D, T> &handle, H *input_data,
   long int *output_vector = new long int[output_count];
   int *int_vector = new int[output_count];
 
-  mgard::decompress_memory_huffman(
+  decompress_memory_huffman(
       reinterpret_cast<unsigned char *>(input_vector.data()),
       input_vector.size(), output_vector,
       output_count * sizeof(*output_vector));

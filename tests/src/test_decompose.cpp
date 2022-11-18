@@ -8,6 +8,8 @@
 #include <random>
 #include <vector>
 
+#include "proto/mgard.pb.h"
+
 #include "testing_random.hpp"
 #include "testing_utilities.hpp"
 
@@ -15,6 +17,7 @@
 #include "TensorProlongation.hpp"
 #include "blas.hpp"
 #include "decompose.hpp"
+#include "format.hpp"
 #include "shuffle.hpp"
 
 namespace {
@@ -44,7 +47,10 @@ void test_dyadic_uniform_decomposition(
     Real *const buffer = buffer_.data();
 
     mgard::shuffle(hierarchy, u, v);
-    mgard::decompose(hierarchy, v);
+    mgard::pb::Header header;
+    mgard::populate_defaults(header);
+    hierarchy.populate(header);
+    mgard::decompose(hierarchy, header, v);
     mgard::unshuffle(hierarchy, v, buffer);
 
     const std::vector<Real> &expected = expecteds.at(L);
@@ -72,7 +78,10 @@ void test_dyadic_uniform_recomposition(
     Real *const buffer = buffer_.data();
 
     mgard::shuffle(hierarchy, u, v);
-    mgard::recompose(hierarchy, v);
+    mgard::pb::Header header;
+    mgard::populate_defaults(header);
+    hierarchy.populate(header);
+    mgard::recompose(hierarchy, header, v);
     mgard::unshuffle(hierarchy, v, buffer);
 
     const std::vector<Real> &expected = expecteds.at(L);
@@ -115,9 +124,12 @@ void test_decomposition_linearity(
     w_.at(i) = alpha * u_.at(i) + v_.at(i);
   }
 
-  mgard::decompose(hierarchy, u);
-  mgard::decompose(hierarchy, v);
-  mgard::decompose(hierarchy, w);
+  mgard::pb::Header header;
+  mgard::populate_defaults(header);
+  hierarchy.populate(header);
+  mgard::decompose(hierarchy, header, u);
+  mgard::decompose(hierarchy, header, v);
+  mgard::decompose(hierarchy, header, w);
 
   TrialTracker tracker;
   for (std::size_t i = 0; i < ndof; ++i) {
@@ -153,9 +165,12 @@ void test_recomposition_linearity(
     w_.at(i) = alpha * u_.at(i) + v_.at(i);
   }
 
-  mgard::recompose(hierarchy, u);
-  mgard::recompose(hierarchy, v);
-  mgard::recompose(hierarchy, w);
+  mgard::pb::Header header;
+  mgard::populate_defaults(header);
+  hierarchy.populate(header);
+  mgard::recompose(hierarchy, header, u);
+  mgard::recompose(hierarchy, header, v);
+  mgard::recompose(hierarchy, header, w);
 
   TrialTracker tracker;
   for (std::size_t i = 0; i < ndof; ++i) {
@@ -199,7 +214,10 @@ void test_decomposition_of_linear_functions(
     const mgard::TensorProlongationAddition PA(hierarchy, hierarchy.L);
     PA(u);
   }
-  mgard::decompose(hierarchy, u);
+  mgard::pb::Header header;
+  mgard::populate_defaults(header);
+  hierarchy.populate(header);
+  mgard::decompose(hierarchy, header, u);
 
   TrialTracker tracker;
   for (const Real &value : u_on_newest) {
@@ -230,7 +248,10 @@ void test_recomposition_with_zero_coefficients(
     return multilevel_coefficient_distribution(generator);
   });
 
-  mgard::recompose(hierarchy, u);
+  mgard::pb::Header header;
+  mgard::populate_defaults(header);
+  hierarchy.populate(header);
+  mgard::recompose(hierarchy, header, u);
 
   std::vector<Real> v_(ndof, 0);
   Real *const v = v_.data();
@@ -252,7 +273,7 @@ void test_recomposition_with_zero_coefficients(
 
 } // namespace
 
-TEST_CASE("decomposition", "[mgard]") {
+TEST_CASE("decomposition", "[decompose]") {
   SECTION("1D, dyadic, uniform") {
     const std::vector<float> u_ = {10, 3,   -8,  -6, 3,  0, -5, 0, 0,  -2, -8,
                                    -5, -10, -7,  8,  -2, 3, -1, 0, 9,  -4, -6,
@@ -421,7 +442,10 @@ TEST_CASE("decomposition", "[mgard]") {
     float *const buffer = buffer_.data();
 
     mgard::shuffle(hierarchy, u, v);
-    mgard::decompose(hierarchy, v);
+    mgard::pb::Header header;
+    mgard::populate_defaults(header);
+    hierarchy.populate(header);
+    mgard::decompose(hierarchy, header, v);
     mgard::unshuffle(hierarchy, v, buffer);
 
     const std::array<float, ndof> expected = {{6.125, -3.5, 2.375}};
@@ -432,7 +456,7 @@ TEST_CASE("decomposition", "[mgard]") {
     REQUIRE(tracker);
   }
 
-  SECTION("linear dependence on input", "[mgard]") {
+  SECTION("linear dependence on input", "[decompose]") {
     std::default_random_engine generator(469957);
     std::uniform_real_distribution<float> node_spacing_distribution(0.2, 1.1);
     std::uniform_real_distribution<float> nodal_coefficient_distribution(0.5,
@@ -450,7 +474,7 @@ TEST_CASE("decomposition", "[mgard]") {
   }
 
   // Piecewise linear on a coarser grid.
-  SECTION("coefficients of linear functions", "[mgard]") {
+  SECTION("coefficients of linear functions", "[decompose]") {
     std::default_random_engine generator(841397);
     std::uniform_real_distribution<double> node_spacing_distribution(0.1, 0.3);
     std::uniform_real_distribution<double> nodal_coefficient_distribution(-2,
@@ -467,7 +491,7 @@ TEST_CASE("decomposition", "[mgard]") {
         {14, 10, 17});
   }
 
-  SECTION("on 'flat' meshes", "[mgard]") {
+  SECTION("on 'flat' meshes", "[decompose]") {
     std::default_random_engine gen(731641);
     // Node spacing distribution.
     std::uniform_real_distribution<double> dis(1, 1.1);
@@ -485,13 +509,19 @@ TEST_CASE("decomposition", "[mgard]") {
     const double s = 1;
     generate_reasonable_function(hierarchy, s, gen, u);
     std::copy(u, u + ndof, expected);
-    mgard::decompose(hierarchy, expected);
+    mgard::pb::Header header;
+    mgard::populate_defaults(header);
+    hierarchy.populate(header);
+    mgard::decompose(hierarchy, header, expected);
 
     {
       const mgard::TensorMeshHierarchy<3, double> flat_hierarchy =
           make_flat_hierarchy<2, 3, double>(hierarchy, {17, 1, 21});
       std::copy(u, u + ndof, obtained);
-      mgard::decompose(flat_hierarchy, obtained);
+      mgard::pb::Header flat_header;
+      mgard::populate_defaults(flat_header);
+      flat_hierarchy.populate(flat_header);
+      mgard::decompose(flat_hierarchy, flat_header, obtained);
       TrialTracker tracker;
       for (std::size_t i = 0; i < ndof; ++i) {
         tracker += obtained[i] == Catch::Approx(expected[i]);
@@ -503,7 +533,10 @@ TEST_CASE("decomposition", "[mgard]") {
       const mgard::TensorMeshHierarchy<5, double> flat_hierarchy =
           make_flat_hierarchy<2, 5, double>(hierarchy, {1, 1, 17, 21, 1});
       std::copy(u, u + ndof, obtained);
-      mgard::decompose(flat_hierarchy, obtained);
+      mgard::pb::Header flat_header;
+      mgard::populate_defaults(flat_header);
+      flat_hierarchy.populate(flat_header);
+      mgard::decompose(flat_hierarchy, flat_header, obtained);
       TrialTracker tracker;
       for (std::size_t i = 0; i < ndof; ++i) {
         tracker += obtained[i] == Catch::Approx(expected[i]);
@@ -513,7 +546,7 @@ TEST_CASE("decomposition", "[mgard]") {
   }
 }
 
-TEST_CASE("recomposition", "[mgard]") {
+TEST_CASE("recomposition", "[decompose]") {
   SECTION("1D, dyadic, uniform") {
     const std::vector<double> u_ = {-4, 2,  -4, 2, 7, -10, -4, -9, 9,
                                     6,  -1, 7,  9, 2, -9,  -8, -1};
@@ -711,7 +744,7 @@ TEST_CASE("recomposition", "[mgard]") {
     test_dyadic_uniform_recomposition<4, float>(u_, expecteds);
   }
 
-  SECTION("linear dependence on input", "[mgard]") {
+  SECTION("linear dependence on input", "[decompose]") {
     std::default_random_engine generator(860343);
     std::uniform_real_distribution<float> node_spacing_distribution(0.1, 0.3);
     std::uniform_real_distribution<float> multilevel_coefficient_distribution(
@@ -728,7 +761,7 @@ TEST_CASE("recomposition", "[mgard]") {
                                            {10, 15, 10});
   }
 
-  SECTION("zero coefficients", "[mgard]") {
+  SECTION("zero coefficients", "[decompose]") {
     std::default_random_engine generator(848733);
     std::uniform_real_distribution<double> node_spacing_distribution(1, 1.1);
     std::uniform_real_distribution<double> multilevel_coefficient_distribution(
@@ -745,7 +778,7 @@ TEST_CASE("recomposition", "[mgard]") {
         multilevel_coefficient_distribution, {17, 15, 9});
   }
 
-  SECTION("on 'flat' meshes", "[mgard]") {
+  SECTION("on 'flat' meshes", "[decompose]") {
     std::default_random_engine gen(679382);
     // Node spacing distribution.
     std::uniform_real_distribution<float> dis(0.25, 0.35);
@@ -763,13 +796,19 @@ TEST_CASE("recomposition", "[mgard]") {
     const float s = 0.75;
     generate_reasonable_function(hierarchy, s, gen, expected);
     std::copy(expected, expected + ndof, u);
-    mgard::decompose(hierarchy, u);
+    mgard::pb::Header header;
+    mgard::populate_defaults(header);
+    hierarchy.populate(header);
+    mgard::decompose(hierarchy, header, u);
 
     {
       const mgard::TensorMeshHierarchy<4, float> flat_hierarchy =
           make_flat_hierarchy<3, 4, float>(hierarchy, {1, 5, 5, 12});
       std::copy(u, u + ndof, obtained);
-      mgard::recompose(flat_hierarchy, obtained);
+      mgard::pb::Header flat_header;
+      mgard::populate_defaults(flat_header);
+      flat_hierarchy.populate(flat_header);
+      mgard::recompose(flat_hierarchy, flat_header, obtained);
       // Getting slightly higher errors here when precomputing shuffled indices
       // and compiling with `-ffast-math`.
       TrialTracker tracker;
@@ -783,7 +822,10 @@ TEST_CASE("recomposition", "[mgard]") {
       const mgard::TensorMeshHierarchy<7, float> flat_hierarchy =
           make_flat_hierarchy<3, 7, float>(hierarchy, {1, 5, 1, 5, 1, 12, 1});
       std::copy(u, u + ndof, obtained);
-      mgard::recompose(flat_hierarchy, obtained);
+      mgard::pb::Header flat_header;
+      mgard::populate_defaults(flat_header);
+      flat_hierarchy.populate(flat_header);
+      mgard::recompose(flat_hierarchy, flat_header, obtained);
       // Getting slightly higher errors here when precomputing shuffled indices
       // and compiling with `-ffast-math`.
       TrialTracker tracker;
@@ -793,4 +835,14 @@ TEST_CASE("recomposition", "[mgard]") {
       REQUIRE(tracker);
     }
   }
+}
+
+TEST_CASE("configuration by header", "[decompose]") {
+  mgard::pb::Header header;
+  header.mutable_function_decomposition()->set_transform(
+      mgard::pb::FunctionDecomposition::MULTILEVEL_COEFFICIENTS);
+  const mgard::TensorMeshHierarchy<3, double> hierarchy({21, 19, 20});
+  double *const u = new double[hierarchy.ndof()];
+  REQUIRE_NOTHROW(recompose(hierarchy, header, u));
+  delete[] u;
 }
