@@ -5,7 +5,7 @@
  * Date: March 17, 2022
  */
 
-#include "../../../Hierarchy/Hierarchy.hpp"
+#include "../../../Hierarchy/Hierarchy.h"
 #include "../../../RuntimeX/RuntimeX.h"
 
 #include "../DataRefactoring.h"
@@ -19,9 +19,10 @@ namespace mgard_x {
 
 template <DIM D, typename T, typename DeviceType>
 void AddND(SubArray<D, T, DeviceType> dinput,
-           SubArray<D, T, DeviceType> &doutput, int queue_idx) {
+           SubArray<D, T, DeviceType> doutput, int queue_idx) {
 
-  LwpkReo<D, T, ADD, DeviceType>().Execute(dinput, doutput, queue_idx);
+  DeviceLauncher<DeviceType>::Execute(
+      LwpkReoKernel<D, T, ADD, DeviceType>(dinput, doutput), queue_idx);
 }
 
 } // namespace mgard_x

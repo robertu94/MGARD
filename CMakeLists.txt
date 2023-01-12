@@ -11,7 +11,7 @@ endif()
 list(INSERT CMAKE_MODULE_PATH 0 "${CMAKE_CURRENT_LIST_DIR}/cmake")
 
 set(MGARD_VERSION_MAJOR "1")
-set(MGARD_VERSION_MINOR "3")
+set(MGARD_VERSION_MINOR "4")
 set(MGARD_VERSION_PATCH "0")
 
 set(MGARD_FILE_VERSION_MAJOR "1")
@@ -41,6 +41,8 @@ option(MGARD_ENABLE_SYCL "Enable SYCL support" OFF)
 option(MGARD_ENABLE_LEGACY_CUDA "Enable legacy CUDA support" OFF)
 option(MGARD_ENABLE_MULTI_DEVICE "Enable multi-device" OFF)
 option(MGARD_ENABLE_COORDINATE_NORMALIZATION "Enable coordinate normalication for uniform grid" ON)
+option(MGARD_ENABLE_AUTO_TUNING "Enable auto tuning" OFF)
+option(MGARD_ENABLE_MDR "Enable MDR" OFF)
 
 option(MGARD_ENABLE_CLI "Build executable." OFF)
 
@@ -117,19 +119,21 @@ if (MGARD_ENABLE_SERIAL OR
   target_link_libraries(mgard-x mgard-library  ${CMAKE_DL_LIBS})
   target_include_directories(mgard-x PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
                                             $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>)
+  install(TARGETS mgard-x)
 
   add_executable(mgard-x-autotuner ${CMAKE_CURRENT_SOURCE_DIR}/src/mgard-x/Executables/mgard-x-autotuner.cpp)
   target_link_libraries(mgard-x-autotuner mgard-library  ${CMAKE_DL_LIBS})
   target_include_directories(mgard-x-autotuner PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
                                                       $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>)
-
-  add_executable(MgardSerialExec ${CMAKE_CURRENT_SOURCE_DIR}/src/mgard-x/Executables/MgardSerialExec.cpp)
-  target_link_libraries(MgardSerialExec mgard-library  ${CMAKE_DL_LIBS})
-  target_include_directories(MgardSerialExec PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-                                                    $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>)
-
-  install(TARGETS mgard-x)
   install(TARGETS mgard-x-autotuner)
+
+  if(MGARD_ENABLE_MDR)
+    add_executable(mdr-x ${CMAKE_CURRENT_SOURCE_DIR}/src/mgard-x/Executables/mdr-x.cpp)
+    target_link_libraries(mdr-x mgard-library  ${CMAKE_DL_LIBS})
+    target_include_directories(mgard-x PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+                                              $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>)
+    install(TARGETS mdr-x)
+  endif()
 endif()
 
 #Adding library here so we can set compile definitions for it.
@@ -158,7 +162,7 @@ if(MGARD_ENABLE_CUDA)
   find_package(CUDAToolkit REQUIRED)
 
   target_compile_definitions(mgard-library PUBLIC MGARD_ENABLE_CUDA)
-  set (CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --expt-relaxed-constexpr -w")
+  set (CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --expt-relaxed-constexpr -w --generate-line-info")
   
   set (MGARD_X_SEPARATE_COMPILE_COMPILATION_OPTION 
        CUDA_SEPARABLE_COMPILATION ON)
@@ -495,6 +499,8 @@ if (MGARD_ENABLE_LEGACY_CUDA)
   list(POP_BACK CMAKE_MESSAGE_INDENT)
 endif()
 message(STATUS "multi-device:  ${MGARD_ENABLE_MULTI_DEVICE}")
+message(STATUS "auto tuning:   ${MGARD_ENABLE_AUTO_TUNING}")
+message(STATUS "MDR:           ${MGARD_ENABLE_MDR}")
 message(STATUS "timing:        ${MGARD_ENABLE_TIMING}")
 message(STATUS "ASan:          ${MGARD_ENABLE_ASAN}")
 message(STATUS "UBSan:         ${MGARD_ENABLE_UBSAN}")

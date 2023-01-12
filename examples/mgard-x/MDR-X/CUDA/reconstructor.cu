@@ -69,19 +69,13 @@ void print_statistics(const T_data *data_ori, const T_data *data_dec,
        << endl;
 }
 
-template <mgard_x::DIM D, class T_data, class T_stream, typename DeviceType,
-          class Decomposer, class Interleaver, class Encoder, class Compressor,
-          class ErrorEstimator, class SizeInterpreter, class Retriever>
+template <mgard_x::DIM D, class T_data, class T_stream, typename DeviceType>
 void test(string filename, const vector<double> &tolerance,
           mgard_x::Hierarchy<D, T_data, DeviceType> &hierarchy,
-          Decomposer decomposer, Interleaver interleaver, Encoder encoder,
-          Compressor compressor, ErrorEstimator estimator,
-          SizeInterpreter interpreter, Retriever retriever) {
-  auto reconstructor = mgard_x::MDR::ComposedReconstructor<
-      D, T_data, T_stream, Decomposer, Interleaver, Encoder, Compressor,
-      SizeInterpreter, ErrorEstimator, Retriever, DeviceType>(
-      hierarchy, decomposer, interleaver, encoder, compressor, interpreter,
-      retriever);
+          std::string metadata_file, std::vector<std::string> files, double s) {
+  auto reconstructor =
+      mgard_x::MDR::ComposedReconstructor<D, T_data, DeviceType>(
+          hierarchy, metadata_file, files);
   cout << "loading metadata" << endl;
   reconstructor.load_metadata();
 
@@ -89,12 +83,12 @@ void test(string filename, const vector<double> &tolerance,
   auto data = readfile<T_data>(filename.c_str(), num_elements);
   for (int i = 0; i < tolerance.size(); i++) {
     mgard_x::log::level |= mgard_x::log::TIME;
-    mgard_x::Timer timer;
-    timer.start();
-    mgard_x::Array<D, T_data, DeviceType> reconstructed_data =
-        reconstructor.progressive_reconstruct(tolerance[i]);
-    timer.end();
-    timer.print("Reconstruct");
+    // mgard_x::Timer timer;
+    // timer.start();
+    mgard_x::Array<D, T_data, DeviceType> reconstructed_data;
+    reconstructor.progressive_reconstruct(tolerance[i], s, reconstructed_data);
+    // timer.end();
+    // timer.print("Reconstruct");
     auto dims = reconstructor.get_dimensions();
     size_t size = 1;
     for (int i = 0; i < dims.size(); i++) {
@@ -108,7 +102,7 @@ int main(int argc, char **argv) {
 
   int argv_id = 1;
   string filename = string(argv[argv_id++]);
-  int error_mode = atoi(argv[argv_id++]);
+  // int error_mode = atoi(argv[argv_id++]);
   int num_tolerance = atoi(argv[argv_id++]);
   vector<double> tolerance(num_tolerance, 0);
   for (int i = 0; i < num_tolerance; i++) {
@@ -150,23 +144,26 @@ int main(int argc, char **argv) {
 
   const mgard_x::DIM D = 3;
   mgard_x::Config config;
-  mgard_x::Hierarchy<D, T_data, DeviceType> hierarchy(dims, config,
-                                                      num_levels - 1);
+  config.max_larget_level = num_levels - 1;
+  mgard_x::Hierarchy<D, T_data, DeviceType> hierarchy(dims, config);
 
   auto decomposer =
       mgard_x::MDR::MGARDOrthoganalDecomposer<D, T_data, DeviceType>(hierarchy);
   auto interleaver =
       mgard_x::MDR::DirectInterleaver<D, T_data, DeviceType>(hierarchy);
-  // auto encoder = mgard_x::MDR::GroupedBPEncoder<T_data, T_stream, T_error,
-  // DeviceType>();
-  auto encoder = mgard_x::MDR::GroupedWarpBPEncoder<T_data, T_stream, T_error,
-                                                    DeviceType>();
-  auto compressor =
-      mgard_x::MDR::DefaultLevelCompressor<T_stream, DeviceType>();
+  auto encoder =
+      mgard_x::MDR::GroupedBPEncoder<D, T_data, T_stream, T_error, DeviceType>(
+          hierarchy);
+  // auto encoder =
+  //     mgard_x::MDR::GroupedWarpBPEncoder<D, T_data, T_stream, T_error,
+  //                                        DeviceType>(hierarchy);
+  auto compressor = mgard_x::MDR::DefaultLevelCompressor<T_stream, DeviceType>(
+      hierarchy.total_num_elems(), 8192, 20480, 1.0);
   auto retriever = mgard_x::MDR::ConcatLevelFileRetriever(metadata_file, files);
 
-  switch (error_mode) {
-  case 1: {
+  // switch (error_mode) {
+  // case 1:
+  if (s != std::numeric_limits<double>::infinity()) {
     auto estimator =
         mgard_x::MDR::SNormErrorEstimator<T_data>(num_dims, num_levels - 1, s);
     // auto interpreter =
@@ -181,12 +178,12 @@ int main(int argc, char **argv) {
     // auto estimator = mgard_x::MDR::L2ErrorEstimator_HB<T_data>(num_dims,
     // num_levels - 1); auto interpreter =
     // mgard_x::MDR::SignExcludeGreedyBasedSizeInterpreter<mgard_x::MDR::L2ErrorEstimator_HB<T_data>>(estimator);
-    test<D, T_data, T_stream, DeviceType>(
-        filename, tolerance, hierarchy, decomposer, interleaver, encoder,
-        compressor, estimator, interpreter, retriever);
-    break;
-  }
-  default: {
+    test<D, T_data, T_stream, DeviceType>(filename, tolerance, hierarchy,
+                                          metadata_file, files, s);
+    // break;
+    // }
+    // default:
+  } else {
     auto estimator = mgard_x::MDR::MaxErrorEstimatorOB<T_data>(num_dims);
     auto interpreter = mgard_x::MDR::SignExcludeGreedyBasedSizeInterpreter<
         mgard_x::MDR::MaxErrorEstimatorOB<T_data>>(estimator);
@@ -197,11 +194,11 @@ int main(int argc, char **argv) {
     // auto estimator = MDR::MaxErrorEstimatorHB<T_data>();
     // auto interpreter =
     // MDR::SignExcludeGreedyBasedSizeInterpreter<MDR::MaxErrorEstimatorHB<T_data>>(estimator);
-    test<D, T_data, T_stream, DeviceType>(
-        filename, tolerance, hierarchy, decomposer, interleaver, encoder,
-        compressor, estimator, interpreter, retriever);
+    test<D, T_data, T_stream, DeviceType>(filename, tolerance, hierarchy,
+                                          metadata_file, files, s);
   }
-  }
+
+  // }
 
   return 0;
 }

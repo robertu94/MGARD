@@ -162,14 +162,13 @@ void Hierarchy<D, T, DeviceType>::calc_am_bm(SIZE dof, T *dist, T *am, T *bm) {
 }
 
 template <DIM D, typename T, typename DeviceType>
-void Hierarchy<D, T, DeviceType>::calc_volume(SIZE dof, T *dist, T *volume) {
+void Hierarchy<D, T, DeviceType>::calc_volume(SIZE dof, T *dist, T *volume,
+                                              bool reciprocal) {
   T *h_dist = new T[dof];
   T *h_volume = new T[dof];
   for (int i = 0; i < dof; i++) {
     h_volume[i] = 0.0;
   }
-  // cudaMemcpyAsyncHelper(*this, h_dist, dist, dof * sizeof(T), AUTO, 0);
-  // this->sync(0);
   MemoryManager<DeviceType>::Copy1D(h_dist, dist, dof, 0);
   DeviceRuntime<DeviceType>::SyncQueue(0);
   if (dof == 2) {
@@ -192,11 +191,11 @@ void Hierarchy<D, T, DeviceType>::calc_volume(SIZE dof, T *dist, T *volume) {
     }
   }
 
-  for (int i = 0; i < dof; i++) {
-    h_volume[i] = 1.0 / h_volume[i];
+  if (reciprocal) {
+    for (int i = 0; i < dof; i++) {
+      h_volume[i] = 1.0 / h_volume[i];
+    }
   }
-  // cudaMemcpyAsyncHelper(*this, volume, h_volume, dof * sizeof(T), AUTO, 0);
-  // this->sync(0);
   MemoryManager<DeviceType>::Copy1D(volume, h_volume, dof, 0);
   DeviceRuntime<DeviceType>::SyncQueue(0);
   delete[] h_dist;
@@ -206,7 +205,7 @@ void Hierarchy<D, T, DeviceType>::calc_volume(SIZE dof, T *dist, T *volume) {
 template <DIM D, typename T, typename DeviceType>
 void Hierarchy<D, T, DeviceType>::init(std::vector<SIZE> shape,
                                        std::vector<T *> coords,
-                                       SIZE target_level) {
+                                       SIZE max_larget_level) {
 
   this->shape = shape;
 
@@ -228,8 +227,8 @@ void Hierarchy<D, T, DeviceType>::init(std::vector<SIZE> shape,
   }
 
   _l_target = nlevel - 1;
-  if (target_level != 0) {
-    _l_target = std::min(_l_target, target_level);
+  if (max_larget_level != 0) {
+    _l_target = std::min(_l_target, max_larget_level);
   }
 
   for (int l = 0; l < _l_target + 1; l++) {
@@ -240,6 +239,7 @@ void Hierarchy<D, T, DeviceType>::init(std::vector<SIZE> shape,
       curr_level_shape[d] = shape_level[d][_l_target - l];
     }
     curr_level_shape_array.load(curr_level_shape.data());
+    curr_level_shape_array.hostCopy();
     _level_shape.push_back(curr_level_shape);
     _level_shape_array.push_back(curr_level_shape_array);
   }
@@ -270,7 +270,30 @@ void Hierarchy<D, T, DeviceType>::init(std::vector<SIZE> shape,
     bool pitched = false;
     _level_ranges = Array<2, SIZE, DeviceType>({_l_target + 2, D}, pitched);
     _level_ranges.load(ranges_h_org);
+    _level_ranges.hostCopy(); // keeping a copy on the host
     delete[] ranges_h_org;
+  }
+
+  {
+    SIZE max_width = 0;
+    for (DIM d = 0; d < D; d++) {
+      max_width = std::max(max_width, _level_shape[_l_target][d]);
+    }
+    int *_level_marks_h = new int[D * max_width];
+    for (DIM d = 0; d < D; d++) {
+      int curr_level = 0;
+      int i = 0;
+      for (SIZE l = 0; l < _l_target + 1; l++) {
+        for (; i < _level_shape[l][d]; i++) {
+          _level_marks_h[d * max_width + i] = l;
+        }
+      }
+    }
+    bool pitched = false;
+    _level_marks = Array<2, int, DeviceType>({D, max_width}, pitched);
+    _level_marks.load(_level_marks_h);
+    // PrintSubarray("_level_marks", SubArray(_level_marks));
+    delete[] _level_marks_h;
   }
 
   { // Coords
@@ -326,11 +349,17 @@ void Hierarchy<D, T, DeviceType>::init(std::vector<SIZE> shape,
     bool pitched = false;
     _level_volumes =
         Array<3, T, DeviceType>({_l_target + 1, D, volumes_width}, pitched);
+    _level_volumes_reciprocal =
+        Array<3, T, DeviceType>({_l_target + 1, D, volumes_width}, pitched);
     SubArray<3, T, DeviceType> volumes_subarray(_level_volumes);
+    SubArray<3, T, DeviceType> volumes_reciprocal_subarray(
+        _level_volumes_reciprocal);
     for (SIZE l = 0; l < _l_target + 1; l++) {
       for (DIM d = 0; d < D; d++) {
         calc_volume(_level_shape[l][d], _dist_array[l][d].data(),
-                    volumes_subarray(l, d, 0));
+                    volumes_subarray(l, d, 0), false);
+        calc_volume(_level_shape[l][d], _dist_array[l][d].data(),
+                    volumes_reciprocal_subarray(l, d, 0), true);
       }
     }
   }
@@ -363,6 +392,7 @@ void Hierarchy<D, T, DeviceType>::init(std::vector<SIZE> shape,
       _processed_dims[D - 1 - d] =
           Array<1, DIM, DeviceType>({(SIZE)tmp.size()});
       _processed_dims[D - 1 - d].load(tmp.data());
+      _processed_dims[D - 1 - d].hostCopy(); // keep a host copy
       tmp.push_back(d);
     }
   }
@@ -384,14 +414,151 @@ void Hierarchy<D, T, DeviceType>::init(std::vector<SIZE> shape,
     }
   }
 
+  {
+    _level_num_elems.resize(_l_target + 1);
+    SIZE prev_num_elems = 0;
+    for (int level_idx = 0; level_idx < _l_target + 1; level_idx++) {
+      SIZE curr_num_elems = 1;
+      for (DIM d = 0; d < D; d++) {
+        curr_num_elems *= level_shape(level_idx, d);
+      }
+      _level_num_elems[level_idx] = curr_num_elems - prev_num_elems;
+      prev_num_elems = curr_num_elems;
+    }
+  }
+
   dummy_array = Array<1, T, DeviceType>({1});
 
   initialized = true;
 }
 
 template <DIM D, typename T, typename DeviceType>
+size_t
+Hierarchy<D, T, DeviceType>::estimate_memory_usgae(std::vector<SIZE> shape) {
+
+  size_t estimate_memory_usgae = 0;
+  Array<1, T, DeviceType> array_with_pitch({1});
+  SIZE pitch_size = array_with_pitch.ld(0) * sizeof(T);
+
+  this->shape = shape;
+  std::vector<std::vector<SIZE>> shape_level;
+  for (int d = 0; d < D; d++) {
+    std::vector<SIZE> curr_shape_level;
+    SIZE n = shape[d];
+    while (n > 2) {
+      curr_shape_level.push_back(n);
+      n = n / 2 + 1;
+    }
+    curr_shape_level.push_back(2);
+    shape_level.push_back(curr_shape_level);
+  }
+
+  SIZE nlevel = shape_level[0].size();
+  for (DIM d = 1; d < D; d++) {
+    nlevel = std::min(nlevel, (SIZE)shape_level[d].size());
+  }
+
+  _l_target = nlevel - 1;
+
+  for (int l = 0; l < _l_target + 1; l++) {
+    std::vector<SIZE> curr_level_shape(D);
+    estimate_memory_usgae += roundup((SIZE)(D * sizeof(SIZE)), pitch_size);
+    assert(shape_level.size() == D);
+    for (int d = 0; d < D; d++) {
+      curr_level_shape[d] = shape_level[d][_l_target - l];
+    }
+    _level_shape.push_back(curr_level_shape);
+  }
+
+  {
+    _total_num_elems = 1;
+    for (int d = D - 1; d >= 0; d--) {
+      _total_num_elems *= _level_shape[_l_target][d];
+    }
+    _linearized_width = 1;
+    for (int d = D - 2; d >= 0; d--) {
+      _linearized_width *= _level_shape[_l_target][d];
+    }
+  }
+
+  { // Ranges
+    estimate_memory_usgae += (_l_target + 2) * D * sizeof(SIZE);
+  }
+
+  { // Coords
+    for (int d = 0; d < D; d++) {
+      estimate_memory_usgae +=
+          roundup((SIZE)(shape[d] * sizeof(T)), pitch_size);
+    }
+  }
+
+  { // calculate dist and ratio
+    for (DIM d = 0; d < D; d++) {
+      estimate_memory_usgae +=
+          roundup((SIZE)(_level_shape[_l_target][d] * sizeof(T)), pitch_size);
+      estimate_memory_usgae +=
+          roundup((SIZE)(_level_shape[_l_target][d] * sizeof(T)), pitch_size);
+    }
+
+    // for l = 1 ... _l_target
+    for (int l = _l_target - 1; l >= 0; l--) {
+      for (DIM d = 0; d < D; d++) {
+        estimate_memory_usgae +=
+            roundup((SIZE)(_level_shape[l][d] * sizeof(T)), pitch_size);
+        estimate_memory_usgae +=
+            roundup((SIZE)(_level_shape[l][d] * sizeof(T)), pitch_size);
+      }
+    }
+  }
+
+  { // volume for quantization
+    SIZE volumes_width = 0;
+    for (DIM d = 0; d < D; d++) {
+      volumes_width = std::max(volumes_width, _level_shape[_l_target][d]);
+    }
+    estimate_memory_usgae += (_l_target + 1) * D * volumes_width * sizeof(T);
+    estimate_memory_usgae += (_l_target + 1) * D * volumes_width * sizeof(T);
+  }
+
+  { // am and bm
+    for (SIZE l = 0; l < _l_target + 1; l++) {
+      for (DIM d = 0; d < D; d++) {
+        estimate_memory_usgae +=
+            roundup((SIZE)(_level_shape[l][d] * sizeof(T)), pitch_size);
+        estimate_memory_usgae +=
+            roundup((SIZE)(_level_shape[l][d] * sizeof(T)), pitch_size);
+      }
+    }
+  }
+
+  {
+    _level_num_elems.resize(_l_target + 1);
+    SIZE prev_num_elems = 0;
+    for (int level_idx = 0; level_idx < _l_target + 1; level_idx++) {
+      SIZE curr_num_elems = 1;
+      for (DIM d = 0; d < D; d++) {
+        curr_num_elems *= level_shape(level_idx, d);
+      }
+      _level_num_elems[level_idx] = curr_num_elems - prev_num_elems;
+      prev_num_elems = curr_num_elems;
+    }
+  }
+
+  return estimate_memory_usgae;
+}
+
+template <DIM D, typename T, typename DeviceType>
 SIZE Hierarchy<D, T, DeviceType>::total_num_elems() {
   return _total_num_elems;
+}
+
+template <DIM D, typename T, typename DeviceType>
+SIZE Hierarchy<D, T, DeviceType>::level_num_elems(SIZE level) {
+  if (level > _l_target + 1) {
+    log::err("Hierarchy::level_num_elems level out of bound.");
+    exit(-1);
+  }
+  return _level_num_elems[level];
 }
 
 template <DIM D, typename T, typename DeviceType>
@@ -508,8 +675,18 @@ Array<2, SIZE, DeviceType> &Hierarchy<D, T, DeviceType>::level_ranges() {
 }
 
 template <DIM D, typename T, typename DeviceType>
-Array<3, T, DeviceType> &Hierarchy<D, T, DeviceType>::level_volumes() {
-  return _level_volumes;
+Array<2, int, DeviceType> &Hierarchy<D, T, DeviceType>::level_marks() {
+  return _level_marks;
+}
+
+template <DIM D, typename T, typename DeviceType>
+Array<3, T, DeviceType> &
+Hierarchy<D, T, DeviceType>::level_volumes(bool reciprocal) {
+  if (!reciprocal) {
+    return _level_volumes;
+  } else {
+    return _level_volumes_reciprocal;
+  }
 }
 
 template <DIM D, typename T, typename DeviceType>
@@ -519,7 +696,7 @@ data_structure_type Hierarchy<D, T, DeviceType>::data_structure() {
 
 template <DIM D, typename T, typename DeviceType>
 void Hierarchy<D, T, DeviceType>::destroy() {
-  // Nothing needs to be done here.
+  initialized = false;
 }
 
 template <DIM D, typename T, typename DeviceType>
@@ -545,10 +722,6 @@ Hierarchy<D, T, DeviceType>::create_uniform_coords(std::vector<SIZE> shape,
   return coords;
 }
 
-template <typename T> T roundup(T a, T b) {
-  return ((double)(a - 1) / b + 1) * b;
-}
-
 template <typename T> void printShape(std::string name, std::vector<T> shape) {
   std::cout << log::log_info << name << ": ";
   for (DIM d = 0; d < shape.size(); d++) {
@@ -558,84 +731,21 @@ template <typename T> void printShape(std::string name, std::vector<T> shape) {
 }
 
 template <DIM D, typename T, typename DeviceType>
-void Hierarchy<D, T, DeviceType>::domain_decompose(std::vector<SIZE> shape,
-                                                   Config config) {
-  if (domain_decomposed_size < 3) {
-    log::err("domain decomposition with reduce dimension not implemented.");
-    exit(-1);
-  }
-  domain_decomposed = true;
-
-  std::vector<SIZE> chunck_shape = shape;
-  chunck_shape[domain_decomposed_dim] = domain_decomposed_size;
-  for (SIZE i = 0;
-       i < shape[domain_decomposed_dim] / chunck_shape[domain_decomposed_dim];
-       i++) {
-    // printShape("Decomposed domain " +
-    // std::to_string(hierarchy_chunck.size()), chunck_shape);
-    hierarchy_chunck.push_back(
-        Hierarchy<D, T, DeviceType>(chunck_shape, config));
-  }
-
-  SIZE leftover_dim_size =
-      shape[domain_decomposed_dim] % chunck_shape[domain_decomposed_dim];
-  if (leftover_dim_size != 0) {
-    std::vector<SIZE> leftover_shape = shape;
-    leftover_shape[domain_decomposed_dim] = leftover_dim_size;
-    // printShape("Decomposed domain " +
-    // std::to_string(hierarchy_chunck.size()), leftover_shape);
-    hierarchy_chunck.push_back(
-        Hierarchy<D, T, DeviceType>(leftover_shape, config));
-  }
+bool Hierarchy<D, T, DeviceType>::is_initialized() {
+  return initialized;
 }
 
 template <DIM D, typename T, typename DeviceType>
-void Hierarchy<D, T, DeviceType>::domain_decompose(std::vector<SIZE> shape,
-                                                   std::vector<T *> &coords,
-                                                   Config config) {
-  if (domain_decomposed_size < 3) {
-    log::err("domain decomposition with reduce dimension not implemented.");
-    exit(-1);
+bool Hierarchy<D, T, DeviceType>::can_reuse(std::vector<SIZE> shape) {
+  if (data_structure() == data_structure_type::Cartesian_Grid_Non_Uniform) {
+    return false;
   }
-  domain_decomposed = true;
-  std::vector<SIZE> chunck_shape = shape;
-  chunck_shape[domain_decomposed_dim] = domain_decomposed_size;
-  std::vector<T *> chunck_coords = coords;
-  for (SIZE i = 0;
-       i < shape[domain_decomposed_dim] / chunck_shape[domain_decomposed_dim];
-       i++) {
-    T *decompose_dim_coord = new T[chunck_shape[domain_decomposed_dim]];
-    MemoryManager<DeviceType>::Copy1D(decompose_dim_coord,
-                                      coords[domain_decomposed_dim] + i,
-                                      chunck_shape[domain_decomposed_dim], 0);
-    DeviceRuntime<DeviceType>::SyncQueue(0);
-    for (SIZE j = 0; j < chunck_shape[domain_decomposed_dim]; j++)
-      decompose_dim_coord[j] -= decompose_dim_coord[0];
-    chunck_coords[domain_decomposed_dim] = decompose_dim_coord;
-    hierarchy_chunck.push_back(
-        Hierarchy<D, T, DeviceType>(chunck_shape, chunck_coords, config));
-    delete[] decompose_dim_coord;
+  for (DIM d = 0; d < D; d++) {
+    if (level_shape(l_target(), d) != shape[d]) {
+      return false;
+    }
   }
-  SIZE leftover_dim_size =
-      shape[domain_decomposed_dim] % chunck_shape[domain_decomposed_dim];
-  if (leftover_dim_size != 0) {
-    std::vector<SIZE> leftover_shape = shape;
-    leftover_shape[domain_decomposed_dim] = leftover_dim_size;
-    std::vector<T *> leftover_coords = coords;
-    T *decompose_dim_coord = new T[leftover_dim_size];
-    MemoryManager<DeviceType>::Copy1D(
-        decompose_dim_coord,
-        coords[domain_decomposed_dim] +
-            (shape[domain_decomposed_dim] - leftover_dim_size),
-        leftover_dim_size, 0);
-    DeviceRuntime<DeviceType>::SyncQueue(0);
-    for (SIZE j = 0; j < leftover_dim_size; j++)
-      decompose_dim_coord[j] -= decompose_dim_coord[0];
-    leftover_coords[domain_decomposed_dim] = decompose_dim_coord;
-    hierarchy_chunck.push_back(
-        Hierarchy<D, T, DeviceType>(leftover_shape, leftover_coords, config));
-    delete[] decompose_dim_coord;
-  }
+  return true;
 }
 
 // This constructor is for internal use only
@@ -643,8 +753,7 @@ template <DIM D, typename T, typename DeviceType>
 Hierarchy<D, T, DeviceType>::Hierarchy() {}
 
 template <DIM D, typename T, typename DeviceType>
-Hierarchy<D, T, DeviceType>::Hierarchy(std::vector<SIZE> shape, Config config,
-                                       SIZE target_level) {
+Hierarchy<D, T, DeviceType>::Hierarchy(std::vector<SIZE> shape, Config config) {
   int ret = check_shape<D>(shape);
   if (ret == -1) {
     log::err(
@@ -663,7 +772,7 @@ Hierarchy<D, T, DeviceType>::Hierarchy(std::vector<SIZE> shape, Config config,
   dstype = data_structure_type::Cartesian_Grid_Uniform;
   std::vector<T *> coords =
       create_uniform_coords(shape, config.normalize_coordinates);
-  init(shape, coords, target_level);
+  init(shape, coords, config.max_larget_level);
   assert(uniform_coords_created);
   assert(coords.size() == D);
   for (int d = 0; d < D; d++)
@@ -672,8 +781,7 @@ Hierarchy<D, T, DeviceType>::Hierarchy(std::vector<SIZE> shape, Config config,
 
 template <DIM D, typename T, typename DeviceType>
 Hierarchy<D, T, DeviceType>::Hierarchy(std::vector<SIZE> shape,
-                                       std::vector<T *> coords, Config config,
-                                       SIZE target_level) {
+                                       std::vector<T *> coords, Config config) {
   int ret = check_shape<D>(shape);
   if (ret == -1) {
     log::err(
@@ -687,27 +795,7 @@ Hierarchy<D, T, DeviceType>::Hierarchy(std::vector<SIZE> shape,
   }
 
   dstype = data_structure_type::Cartesian_Grid_Non_Uniform;
-  init(shape, coords, target_level);
-}
-
-template <DIM D, typename T, typename DeviceType>
-Hierarchy<D, T, DeviceType>::Hierarchy(std::vector<SIZE> shape,
-                                       DIM domain_decomposed_dim,
-                                       SIZE domain_decomposed_size,
-                                       Config config) {
-  this->domain_decomposed_dim = domain_decomposed_dim;
-  this->domain_decomposed_size = domain_decomposed_size;
-  domain_decompose(shape, config);
-}
-
-template <DIM D, typename T, typename DeviceType>
-Hierarchy<D, T, DeviceType>::Hierarchy(std::vector<SIZE> shape,
-                                       DIM domain_decomposed_dim,
-                                       SIZE domain_decomposed_size,
-                                       std::vector<T *> coords, Config config) {
-  this->domain_decomposed_dim = domain_decomposed_dim;
-  this->domain_decomposed_size = domain_decomposed_size;
-  domain_decompose(shape, coords, config);
+  init(shape, coords, config.max_larget_level);
 }
 
 template <DIM D, typename T, typename DeviceType>
@@ -715,16 +803,19 @@ Hierarchy<D, T, DeviceType>::Hierarchy(const Hierarchy &hierarchy) {
   _l_target = hierarchy._l_target;
   shape = hierarchy.shape;
   _total_num_elems = hierarchy._total_num_elems;
+  _level_num_elems = hierarchy._level_num_elems;
   _linearized_width = hierarchy._linearized_width;
   _coords_org = hierarchy._coords_org;
   _dist_array = hierarchy._dist_array;
   _ratio_array = hierarchy._ratio_array;
   _level_volumes = hierarchy._level_volumes;
+  _level_volumes_reciprocal = hierarchy._level_volumes_reciprocal;
   _am_array = hierarchy._am_array;
   _bm_array = hierarchy._bm_array;
   _level_shape = hierarchy._level_shape;
   _level_shape_array = hierarchy._level_shape_array;
   _level_ranges = hierarchy._level_ranges;
+  _level_marks = hierarchy._level_marks;
   dstype = hierarchy.dstype;
   if (D >= 4) {
     for (DIM d = 0; d < D; d++) {
@@ -734,9 +825,6 @@ Hierarchy<D, T, DeviceType>::Hierarchy(const Hierarchy &hierarchy) {
       _unprocessed_dims[d] = hierarchy._unprocessed_dims[d];
     }
   }
-  domain_decomposed = hierarchy.domain_decomposed;
-  domain_decomposed_dim = hierarchy.domain_decomposed_dim;
-  domain_decomposed_size = hierarchy.domain_decomposed_size;
   dummy_array = hierarchy.dummy_array;
 }
 

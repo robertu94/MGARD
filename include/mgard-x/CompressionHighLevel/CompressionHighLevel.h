@@ -11,9 +11,9 @@
 #include <numeric>
 #include <vector>
 
-#include "../Hierarchy/Hierarchy.h"
-#include "../RuntimeX/RuntimeXPublic.h"
-#include "Metadata.hpp"
+// #include "../Hierarchy/Hierarchy.h"
+// #include "../RuntimeX/RuntimeXPublic.h"
+// #include "Metadata.hpp"
 
 #ifndef MGARD_X_COMPRESSION_HIGH_LEVEL_API_H
 #define MGARD_X_COMPRESSION_HIGH_LEVEL_API_H
@@ -64,6 +64,12 @@ template <typename DeviceType>
 void decompress(const void *compressed_data, size_t compressed_size,
                 void *&decompressed_data, data_type &dtype,
                 std::vector<mgard_x::SIZE> &shape, bool output_pre_allocated);
+
+template <typename DeviceType> void pin_memory(void *ptr, SIZE num_bytes);
+
+template <typename DeviceType> bool check_memory_pinned(void *ptr);
+
+template <typename DeviceType> void unpin_memory(void *ptr);
 
 } // namespace mgard_x
 

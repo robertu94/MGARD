@@ -5,6 +5,8 @@
  * Date: March 17, 2022
  */
 
+#include <limits>
+
 #include "mgard-x/Config/Config.h"
 
 namespace mgard_x {
@@ -13,7 +15,9 @@ Config::Config() {
   dev_type = device_type::AUTO;
   dev_id = 0;
   num_dev = 1;
+  domain_decomposition = domain_decomposition_type::MaxDim;
   decomposition = decomposition_type::MultiDim;
+  estimate_outlier_ratio = 1.0;
   huff_dict_size = 8192;
   huff_block_size = 1024 * 20;
   lz4_block_size = 1 << 15;
@@ -26,6 +30,13 @@ Config::Config() {
   lossless = lossless_type::Huffman;
   reorder = 0;
   log_level = log::ERR;
+  max_larget_level = 0; // no limit
+  prefetch = true;
+  max_memory_footprint = std::numeric_limits<SIZE>::max(); // no limit
+  total_num_bitplanes = 32;
+  block_size = 256;
+  mdr_adaptive_resolution = false;
+  collect_uncertainty = false;
 }
 
 void Config::apply() { log::level = log_level; }

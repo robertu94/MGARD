@@ -812,7 +812,7 @@ public:
     using converted_T =
         typename std::conditional<std::is_same<T, void>::value, Byte, T>::type;
     ptr = (T *)std::malloc(n * sizeof(converted_T));
-    if (ptr == NULL) {
+    if (ptr == nullptr) {
       log::err("MemoryManager<SERIAL>::Malloc1D error.");
     }
   }
@@ -825,7 +825,7 @@ public:
         typename std::conditional<std::is_same<T, void>::value, Byte, T>::type;
     ptr = (T *)std::malloc(n1 * n2 * sizeof(converted_T));
     ld = n1;
-    if (ptr == NULL) {
+    if (ptr == nullptr) {
       log::err("MemoryManager<SERIAL>::MallocND error.");
     }
   }
@@ -837,7 +837,7 @@ public:
     using converted_T =
         typename std::conditional<std::is_same<T, void>::value, Byte, T>::type;
     ptr = (T *)std::malloc(n * sizeof(converted_T));
-    if (ptr == NULL) {
+    if (ptr == nullptr) {
       log::err("MemoryManager<SERIAL>::MallocManaged1D error.");
     }
   }
@@ -846,7 +846,7 @@ public:
   MGARDX_CONT static void Free(T *ptr,
                                int queue_idx = MGARDX_SYNCHRONIZED_QUEUE) {
     log::dbg("Calling MemoryManager<SERIAL>::Free");
-    if (ptr == NULL)
+    if (ptr == nullptr)
       return;
     std::free(ptr);
   }
@@ -887,7 +887,7 @@ public:
     using converted_T =
         typename std::conditional<std::is_same<T, void>::value, Byte, T>::type;
     ptr = (T *)std::malloc(n * sizeof(converted_T));
-    if (ptr == NULL) {
+    if (ptr == nullptr) {
       log::err("MemoryManager<SERIAL>::MallocHost error.");
     }
   }
@@ -896,7 +896,7 @@ public:
   MGARDX_CONT static void FreeHost(T *ptr,
                                    int queue_idx = MGARDX_SYNCHRONIZED_QUEUE) {
     log::dbg("Calling MemoryManager<SERIAL>::FreeHost");
-    if (ptr == NULL)
+    if (ptr == nullptr)
       return;
     std::free(ptr);
   }
@@ -1162,90 +1162,275 @@ public:
   }
 };
 
+template <> class DeviceLauncher<SERIAL> {
+public:
+  template <typename TaskType>
+  MGARDX_CONT int static IsResourceEnough(TaskType &task) {
+    if (task.GetBlockDimX() * task.GetBlockDimY() * task.GetBlockDimZ() >
+        DeviceRuntime<SERIAL>::GetMaxNumThreadsPerTB()) {
+      return THREADBLOCK_TOO_LARGE;
+    }
+    if (task.GetSharedMemorySize() >
+        DeviceRuntime<SERIAL>::GetMaxSharedMemorySize()) {
+      return SHARED_MEMORY_TOO_LARGE;
+    }
+    return RESOURCE_ENOUGH;
+  }
+
+  template <typename TaskType>
+  MGARDX_CONT ExecutionReturn static Execute(TaskType &task) {
+
+    if (DeviceRuntime<SERIAL>::PrintKernelConfig) {
+      std::cout << log::log_info << task.GetFunctorName() << ": <"
+                << task.GetBlockDimX() << ", " << task.GetBlockDimY() << ", "
+                << task.GetBlockDimZ() << "> <" << task.GetGridDimX() << ", "
+                << task.GetGridDimY() << ", " << task.GetGridDimZ() << ">\n";
+    }
+
+    ExecutionReturn ret;
+    if (IsResourceEnough(task) != RESOURCE_ENOUGH) {
+      if (DeviceRuntime<SERIAL>::PrintKernelConfig) {
+        if (IsResourceEnough(task) == THREADBLOCK_TOO_LARGE) {
+          log::info("threadblock too large.");
+        }
+        if (IsResourceEnough(task) == SHARED_MEMORY_TOO_LARGE) {
+          log::info("shared memory too large.");
+        }
+      }
+      ret.success = false;
+      ret.execution_time = std::numeric_limits<double>::max();
+      return ret;
+    }
+
+    Timer timer;
+    if (DeviceRuntime<SERIAL>::TimingAllKernels ||
+        AutoTuner<SERIAL>::ProfileKernels) {
+      DeviceRuntime<SERIAL>::SyncDevice();
+      timer.start();
+    }
+    // if constexpr evalute at compile time otherwise this does not compile
+    if constexpr (std::is_base_of<Functor<SERIAL>,
+                                  typename TaskType::Functor>::value) {
+      SerialKernel(task);
+    } else if constexpr (std::is_base_of<IterFunctor<SERIAL>,
+                                         typename TaskType::Functor>::value) {
+      SerialIterKernel(task);
+    } else if constexpr (std::is_base_of<HuffmanCLCustomizedFunctor<SERIAL>,
+                                         typename TaskType::Functor>::value) {
+      SerialHuffmanCLCustomizedKernel(task);
+    } else if constexpr (std::is_base_of<HuffmanCWCustomizedFunctor<SERIAL>,
+                                         typename TaskType::Functor>::value) {
+      SerialHuffmanCWCustomizedKernel(task);
+    }
+    // timer.end();
+    // timer.print(task.GetFunctorName());
+    // timer.clear();
+    if (DeviceRuntime<SERIAL>::TimingAllKernels ||
+        AutoTuner<SERIAL>::ProfileKernels) {
+      DeviceRuntime<SERIAL>::SyncDevice();
+      timer.end();
+      if (DeviceRuntime<SERIAL>::TimingAllKernels) {
+        timer.print(task.GetFunctorName());
+      }
+      if (AutoTuner<SERIAL>::ProfileKernels) {
+        ret.success = true;
+        ret.execution_time = timer.get();
+      }
+    }
+    return ret;
+  }
+
+  template <typename TaskType>
+  MGARDX_CONT static void ConfigTask(TaskType task) {
+    typename TaskType::Functor functor;
+    int maxbytes = DeviceRuntime<SERIAL>::GetMaxSharedMemorySize();
+    DeviceRuntime<SERIAL>::SetMaxDynamicSharedMemorySize(functor, maxbytes);
+  }
+
+  template <typename KernelType>
+  MGARDX_CONT static void AutoTune(KernelType kernel, int queue_idx) {
+#if MGARD_ENABLE_AUTO_TUNING
+    double min_time = std::numeric_limits<double>::max();
+    int min_config = 0;
+    ExecutionReturn ret;
+#define RUN_CONFIG(CONFIG_IDX)                                                 \
+  {                                                                            \
+    constexpr ExecutionConfig config =                                         \
+        GetExecutionConfig<KernelType::NumDim>(CONFIG_IDX);                    \
+    auto task =                                                                \
+        kernel.template GenTask<config.z, config.y, config.x>(queue_idx);      \
+    if constexpr (KernelType::EnableConfig()) {                                \
+      ConfigTask(task);                                                        \
+    }                                                                          \
+    ret = Execute(task);                                                       \
+    if (ret.success && min_time > ret.execution_time) {                        \
+      min_time = ret.execution_time;                                           \
+      min_config = CONFIG_IDX;                                                 \
+    }                                                                          \
+  }
+    RUN_CONFIG(0)
+    RUN_CONFIG(1)
+    RUN_CONFIG(2)
+    RUN_CONFIG(3)
+    RUN_CONFIG(4)
+    RUN_CONFIG(5)
+    RUN_CONFIG(6)
+#undef RUN_CONFIG
+    if (AutoTuner<SERIAL>::WriteToTable) {
+      FillAutoTunerTable<KernelType::NumDim, typename KernelType::DataType,
+                         SERIAL>(std::string(KernelType::Name), min_config);
+    }
+#else
+    log::err("MGARD is not built with auto tuning enabled.");
+    exit(-1);
+#endif
+  }
+
+  template <typename KernelType>
+  MGARDX_CONT static void Execute(KernelType kernel, int queue_idx) {
+    if constexpr (KernelType::EnableAutoTuning()) {
+      constexpr ExecutionConfig config =
+          GetExecutionConfig<KernelType::NumDim, typename KernelType::DataType,
+                             SERIAL>(KernelType::Name);
+      auto task =
+          kernel.template GenTask<config.z, config.y, config.x>(queue_idx);
+      if constexpr (KernelType::EnableConfig()) {
+        ConfigTask(task);
+      }
+      Execute(task);
+
+      if (AutoTuner<SERIAL>::ProfileKernels) {
+        AutoTune(kernel, queue_idx);
+      }
+    } else {
+      auto task = kernel.GenTask(queue_idx);
+      if constexpr (KernelType::EnableConfig()) {
+        ConfigTask(task);
+      }
+      Execute(task);
+    }
+  }
+};
+
 template <> class DeviceCollective<SERIAL> {
 public:
   MGARDX_CONT
   DeviceCollective(){};
 
   template <typename T>
-  MGARDX_CONT static void Sum(SIZE n, SubArray<1, T, SERIAL> &v,
-                              SubArray<1, T, SERIAL> &result, int queue_idx) {
-    *result((IDX)0) = std::accumulate(v((IDX)0), v((IDX)n), 0);
-  }
-
-  template <typename T>
-  MGARDX_CONT static void AbsMax(SIZE n, SubArray<1, T, SERIAL> &v,
-                                 SubArray<1, T, SERIAL> &result,
-                                 int queue_idx) {
-    T max_result = 0;
-    for (SIZE i = 0; i < n; ++i) {
-      max_result = std::max((T)fabs(*v(i)), max_result);
+  MGARDX_CONT static void
+  Sum(SIZE n, SubArray<1, T, SERIAL> v, SubArray<1, T, SERIAL> result,
+      Array<1, Byte, SERIAL> &workspace, int queue_idx) {
+    if (workspace.hasDeviceAllocation()) {
+      *result((IDX)0) = std::accumulate(v((IDX)0), v((IDX)n), 0);
+    } else {
+      workspace = Array<1, Byte, SERIAL>({(SIZE)1});
     }
-    *result((IDX)0) = max_result;
   }
 
   template <typename T>
-  MGARDX_CONT static void SquareSum(SIZE n, SubArray<1, T, SERIAL> &v,
-                                    SubArray<1, T, SERIAL> &result,
-                                    int queue_idx) {
-    T sum_result = 0;
-    for (SIZE i = 0; i < n; ++i) {
-      T tmp = *v(i);
-      sum_result += tmp * tmp;
+  MGARDX_CONT static void
+  AbsMax(SIZE n, SubArray<1, T, SERIAL> v, SubArray<1, T, SERIAL> result,
+         Array<1, Byte, SERIAL> &workspace, int queue_idx) {
+    if (workspace.hasDeviceAllocation()) {
+      T max_result = 0;
+      for (SIZE i = 0; i < n; ++i) {
+        max_result = std::max((T)fabs(*v(i)), max_result);
+      }
+      *result((IDX)0) = max_result;
+    } else {
+      workspace = Array<1, Byte, SERIAL>({(SIZE)1});
     }
-    *result((IDX)0) = sum_result;
   }
 
   template <typename T>
-  MGARDX_CONT static void ScanSumInclusive(SIZE n, SubArray<1, T, SERIAL> &v,
-                                           SubArray<1, T, SERIAL> &result,
+  MGARDX_CONT static void
+  SquareSum(SIZE n, SubArray<1, T, SERIAL> v, SubArray<1, T, SERIAL> result,
+            Array<1, Byte, SERIAL> &workspace, int queue_idx) {
+    if (workspace.hasDeviceAllocation()) {
+      T sum_result = 0;
+      for (SIZE i = 0; i < n; ++i) {
+        T tmp = *v(i);
+        sum_result += tmp * tmp;
+      }
+      *result((IDX)0) = sum_result;
+    } else {
+      workspace = Array<1, Byte, SERIAL>({(SIZE)1});
+    }
+  }
+
+  template <typename T>
+  MGARDX_CONT static void ScanSumInclusive(SIZE n, SubArray<1, T, SERIAL> v,
+                                           SubArray<1, T, SERIAL> result,
+                                           Array<1, Byte, SERIAL> &workspace,
                                            int queue_idx) {
     // Need gcc 9 and c++17
 #if (__GNUC__ >= 9)
-    std::inclusive_scan(v((IDX)0), v((IDX)n), result((IDX)0));
+    if (workspace.hasDeviceAllocation()) {
+      std::inclusive_scan(v((IDX)0), v((IDX)n), result((IDX)0));
+    } else {
+      workspace = Array<1, Byte, SERIAL>({(SIZE)1});
+    }
 #else
     log::err("Please recompile with GCC 9+ to use ScanSumInclusive<SERIAL>.");
 #endif
   }
 
   template <typename T>
-  MGARDX_CONT static void ScanSumExclusive(SIZE n, SubArray<1, T, SERIAL> &v,
-                                           SubArray<1, T, SERIAL> &result,
+  MGARDX_CONT static void ScanSumExclusive(SIZE n, SubArray<1, T, SERIAL> v,
+                                           SubArray<1, T, SERIAL> result,
+                                           Array<1, Byte, SERIAL> &workspace,
                                            int queue_idx) {
     // Need gcc 9 and c++17
 #if (__GNUC__ >= 9)
-    std::exclusive_scan(v((IDX)0), v((IDX)n), result((IDX)0));
+    if (workspace.hasDeviceAllocation()) {
+      std::exclusive_scan(v((IDX)0), v((IDX)n), result((IDX)0));
+    } else {
+      workspace = Array<1, Byte, SERIAL>({(SIZE)1});
+    }
 #else
     log::err("Please recompile with GCC 9+ to use ScanSumExclusive<SERIAL>.");
 #endif
   }
 
   template <typename T>
-  MGARDX_CONT static void ScanSumExtended(SIZE n, SubArray<1, T, SERIAL> &v,
-                                          SubArray<1, T, SERIAL> &result,
+  MGARDX_CONT static void ScanSumExtended(SIZE n, SubArray<1, T, SERIAL> v,
+                                          SubArray<1, T, SERIAL> result,
+                                          Array<1, Byte, SERIAL> &workspace,
                                           int queue_idx) {
     // Need gcc 9 and c++17
 #if (__GNUC__ >= 9)
-    std::inclusive_scan(v((IDX)0), v((IDX)n), result((IDX)1));
-    *result((IDX)0) = 0;
+    if (workspace.hasDeviceAllocation()) {
+      std::inclusive_scan(v((IDX)0), v((IDX)n), result((IDX)1));
+      *result((IDX)0) = 0;
+    } else {
+      workspace = Array<1, Byte, SERIAL>({(SIZE)1});
+    }
 #else
     log::err("Please recompile with GCC 9+ to use ScanSumExtended<SERIAL>.");
 #endif
   }
 
   template <typename KeyT, typename ValueT>
-  MGARDX_CONT static void SortByKey(SIZE n, SubArray<1, KeyT, SERIAL> &keys,
-                                    SubArray<1, ValueT, SERIAL> &values,
+  MGARDX_CONT static void SortByKey(SIZE n, SubArray<1, KeyT, SERIAL> in_keys,
+                                    SubArray<1, ValueT, SERIAL> in_values,
+                                    SubArray<1, KeyT, SERIAL> out_keys,
+                                    SubArray<1, ValueT, SERIAL> out_values,
+                                    Array<1, Byte, SERIAL> &workspace,
                                     int queue_idx) {
-    std::vector<std::pair<KeyT, ValueT>> data(n);
-    for (SIZE i = 0; i < n; ++i) {
-      data[i] = std::pair<KeyT, ValueT>(*keys(i), *values(i));
-    }
-    std::stable_sort(data.begin(), data.end(),
-                     KeyValueComparator<KeyT, ValueT>{});
-    for (SIZE i = 0; i < n; ++i) {
-      *keys(i) = data[i].first;
-      *values(i) = data[i].second;
+    if (workspace.hasDeviceAllocation()) {
+      std::vector<std::pair<KeyT, ValueT>> data(n);
+      for (SIZE i = 0; i < n; ++i) {
+        data[i] = std::pair<KeyT, ValueT>(*in_keys(i), *in_values(i));
+      }
+      std::stable_sort(data.begin(), data.end(),
+                       KeyValueComparator<KeyT, ValueT>{});
+      for (SIZE i = 0; i < n; ++i) {
+        *out_keys(i) = data[i].first;
+        *out_values(i) = data[i].second;
+      }
+    } else {
+      workspace = Array<1, Byte, SERIAL>({(SIZE)1});
     }
   }
 };

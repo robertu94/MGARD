@@ -6,7 +6,7 @@
  */
 
 #include "../Config/Config.h"
-#include "../RuntimeX/RuntimeXPublic.h"
+#include "../RuntimeX/RuntimeX.h"
 #include "../Utilities/Types.h"
 
 #ifndef MGARD_X_HIERARCHY_H
@@ -17,20 +17,15 @@ namespace mgard_x {
 template <DIM D, typename T, typename DeviceType> struct Hierarchy {
 
   /* for general users */
-  Hierarchy(std::vector<SIZE> shape, Config config, SIZE target_level = 0);
-  Hierarchy(std::vector<SIZE> shape, std::vector<T *> coords, Config config,
-            SIZE target_level = 0);
+  Hierarchy(std::vector<SIZE> shape, Config config);
+  Hierarchy(std::vector<SIZE> shape, std::vector<T *> coords, Config config);
 
   /* for Internal use only */
   Hierarchy();
-  Hierarchy(std::vector<SIZE> shape, DIM domain_decomposed_dim,
-            SIZE domain_decomposed_size, Config config);
-  Hierarchy(std::vector<SIZE> shape, DIM domain_decomposed_dim,
-            SIZE domain_decomposed_size, std::vector<T *> coords,
-            Config config);
   Hierarchy(const Hierarchy &hierarchy);
 
   SIZE total_num_elems();
+  SIZE level_num_elems(SIZE level);
   SIZE linearized_width();
   SIZE l_target();
   std::vector<SIZE> level_shape(SIZE level);
@@ -43,24 +38,21 @@ template <DIM D, typename T, typename DeviceType> struct Hierarchy {
   Array<1, DIM, DeviceType> &processed(SIZE idx, DIM &processed_n);
   Array<1, DIM, DeviceType> &unprocessed(SIZE idx, DIM &processed_n);
   Array<2, SIZE, DeviceType> &level_ranges();
-  Array<3, T, DeviceType> &level_volumes();
+  Array<2, int, DeviceType> &level_marks();
+  Array<3, T, DeviceType> &level_volumes(bool reciprocal);
   data_structure_type data_structure();
+  bool is_initialized();
+  bool can_reuse(std::vector<SIZE> shape);
+  size_t estimate_memory_usgae(std::vector<SIZE> shape);
 
   ~Hierarchy();
-
-  /* Refactoring env */
-
-  // For domain decomposition
-  bool domain_decomposed = false;
-  DIM domain_decomposed_dim;
-  SIZE domain_decomposed_size;
-  std::vector<Hierarchy<D, T, DeviceType>> hierarchy_chunck;
 
 private:
   // Shape of the finest grid
   std::vector<SIZE> shape;
   // Pre-computed varaibles
   SIZE _total_num_elems;
+  std::vector<SIZE> _level_num_elems;
   SIZE _linearized_width;
   // For out-of-bound returns
   Array<1, T, DeviceType> dummy_array;
@@ -86,8 +78,10 @@ private:
   Array<1, DIM, DeviceType> _unprocessed_dims[D];
   // Pre-computed range array for fast quantization
   Array<2, SIZE, DeviceType> _level_ranges;
+  Array<2, int, DeviceType> _level_marks;
   // Pre-computed volume array for fast quantization
   Array<3, T, DeviceType> _level_volumes;
+  Array<3, T, DeviceType> _level_volumes_reciprocal;
   // Indicating if it is uniform or non-uniform grid
   enum data_structure_type dstype;
 
@@ -97,10 +91,7 @@ private:
   void dist_to_ratio(SIZE dof, T *dist, T *ratio);
   void reduce_dist(SIZE dof, T *dist, T *dist2);
   void calc_am_bm(SIZE dof, T *dist, T *am, T *bm);
-  void calc_volume(SIZE dof, T *dist, T *volume);
-  void domain_decompose(std::vector<SIZE> shape, Config config);
-  void domain_decompose(std::vector<SIZE> shape, std::vector<T *> &coords,
-                        Config config);
+  void calc_volume(SIZE dof, T *dist, T *volume, bool reciprocal);
   void init(std::vector<SIZE> shape, std::vector<T *> coords,
             SIZE target_level = 0);
   void destroy();

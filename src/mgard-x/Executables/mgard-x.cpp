@@ -11,10 +11,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "compress_x.hpp"
 #include "mgard-x/Utilities/ErrorCalculator.h"
 // #include "compress_cuda.hpp"
+
+#define OUTPUT_SAFTY_OVERHEAD 1e6
 
 using namespace std::chrono;
 
@@ -36,7 +39,7 @@ void print_usage_message(std::string error) {
 \t\t -m <abs|rel>: error bound mode (abs: abolute; rel: relative)\n\
 \t\t -e <error>: error bound\n\
 \t\t -s <smoothness>: smoothness parameter\n\
-\t\t -l choose lossless compressor (0:Huffman 1:Huffman+LZ4 3:Huffman+Zstd)\n\
+\t\t -l choose lossless compressor (0:Huffman 1:Huffman+LZ4 2:Huffman+Zstd)\n\
 \t\t -d <auto|serial|openmp|cuda|hip|sycl>: device type\n\
 \t\t -v enable verbose (show timing and statistics)\n\
 \n\
@@ -291,17 +294,24 @@ int launch_compress(mgard_x::DIM D, enum mgard_x::data_type dtype,
                     std::vector<mgard_x::SIZE> shape, bool non_uniform,
                     const char *coords_file, double tol, double s,
                     enum mgard_x::error_bound_type mode, int reorder,
-                    int lossless, enum mgard_x::device_type dev_type,
-                    int num_dev, int verbose) {
+                    int lossless, int domain_decomposition,
+                    enum mgard_x::device_type dev_type, int num_dev,
+                    int verbose, bool prefetch,
+                    mgard_x::SIZE max_memory_footprint) {
 
   mgard_x::Config config;
   config.log_level = verbose_to_log_level(verbose);
   config.decomposition = mgard_x::decomposition_type::MultiDim;
+  if (domain_decomposition == 0) {
+    config.domain_decomposition = mgard_x::domain_decomposition_type::MaxDim;
+  } else {
+    config.domain_decomposition = mgard_x::domain_decomposition_type::Block;
+  }
   config.dev_type = dev_type;
   config.num_dev = num_dev;
-  config.zstd_compress_level = 1;
-  config.huff_dict_size = 8192;
   config.reorder = reorder;
+  config.prefetch = prefetch;
+  config.max_memory_footprint = max_memory_footprint;
 
   if (lossless == 0) {
     config.lossless = mgard_x::lossless_type::Huffman;
@@ -320,7 +330,7 @@ int launch_compress(mgard_x::DIM D, enum mgard_x::data_type dtype,
   size_t in_size = 0;
   if (std::string(input_file).compare("random") == 0) {
     in_size = original_size * sizeof(T);
-    original_data = new T[original_size];
+    original_data = (T *)malloc(original_size * sizeof(T));
     srand(7117);
     T c = 0;
     for (size_t i = 0; i < original_size; i++) {
@@ -334,13 +344,14 @@ int launch_compress(mgard_x::DIM D, enum mgard_x::data_type dtype,
               << in_size << " vs. " << original_size * sizeof(T) << "!\n";
   }
 
-  void *compressed_data = NULL;
-  size_t compressed_size = 0;
-  void *decompressed_data = NULL;
+  size_t compressed_size = original_size * sizeof(T) + OUTPUT_SAFTY_OVERHEAD;
+  void *compressed_data = (void *)malloc(compressed_size);
+  mgard_x::pin_memory(original_data, original_size * sizeof(T), config);
+  mgard_x::pin_memory(compressed_data, compressed_size, config);
   std::vector<const mgard_x::Byte *> coords_byte;
   if (!non_uniform) {
     mgard_x::compress(D, dtype, shape, tol, s, mode, original_data,
-                      compressed_data, compressed_size, config, false);
+                      compressed_data, compressed_size, config, true);
   } else {
     std::vector<T *> coords;
     if (non_uniform) {
@@ -351,7 +362,7 @@ int launch_compress(mgard_x::DIM D, enum mgard_x::data_type dtype,
     }
     mgard_x::compress(D, dtype, shape, tol, s, mode, original_data,
                       compressed_data, compressed_size, coords_byte, config,
-                      false);
+                      true);
   }
 
   writefile(output_file, compressed_size, compressed_data);
@@ -364,26 +375,35 @@ int launch_compress(mgard_x::DIM D, enum mgard_x::data_type dtype,
 
   if (verbose) {
     config.log_level = verbose_to_log_level(verbose);
-
+    void *decompressed_data = malloc(original_size * sizeof(T));
+    mgard_x::pin_memory(decompressed_data, original_size * sizeof(T), config);
     mgard_x::decompress(compressed_data, compressed_size, decompressed_data,
-                        config, false);
+                        config, true);
 
     print_statistics<T>(s, mode, shape, original_data, (T *)decompressed_data,
                         tol, config.normalize_coordinates);
+
+    mgard_x::unpin_memory(decompressed_data, config);
+    delete[](T *) decompressed_data;
   }
 
-  delete[](T *) original_data;
+  mgard_x::unpin_memory(original_data, config);
+  mgard_x::unpin_memory(compressed_data, config);
+  free(original_data);
+  free(compressed_data);
+
   return 0;
 }
 
 int launch_decompress(const char *input_file, const char *output_file,
                       enum mgard_x::device_type dev_type, int num_dev,
-                      int verbose) {
+                      int verbose, bool prefetch) {
 
   mgard_x::Config config;
   config.log_level = verbose_to_log_level(verbose);
   config.dev_type = dev_type;
   config.num_dev;
+  config.prefetch = prefetch;
 
   mgard_x::SERIALIZED_TYPE *compressed_data;
   size_t compressed_size = readfile(input_file, compressed_data);
@@ -519,18 +539,43 @@ bool try_compression(int argc, char *argv[]) {
     num_dev = get_arg_int(argc, argv, "-g");
   }
 
+  int repeat = 1;
+  if (has_arg(argc, argv, "-p")) {
+    repeat = get_arg_int(argc, argv, "-p");
+  }
+
+  bool prefetch = true;
+  if (has_arg(argc, argv, "-h")) {
+    prefetch = get_arg_int(argc, argv, "-h") == 1 ? true : false;
+  }
+
+  mgard_x::SIZE max_memory_footprint =
+      std::numeric_limits<mgard_x::SIZE>::max();
+  if (has_arg(argc, argv, "-f")) {
+    max_memory_footprint = (mgard_x::SIZE)get_arg_double(argc, argv, "-f");
+  }
+
+  int domain_decomposition = 0;
+  if (has_arg(argc, argv, "-b")) {
+    domain_decomposition = get_arg_int(argc, argv, "-b");
+  }
+
   if (verbose)
     std::cout << mgard_x::log::log_info << "Verbose: enabled\n";
-  if (dtype == mgard_x::data_type::Double) {
-    launch_compress<double>(D, dtype, input_file.c_str(), output_file.c_str(),
-                            shape, non_uniform, non_uniform_coords_file.c_str(),
-                            tol, s, mode, reorder, lossless_level, dev_type,
-                            num_dev, verbose);
-  } else if (dtype == mgard_x::data_type::Float) {
-    launch_compress<float>(D, dtype, input_file.c_str(), output_file.c_str(),
-                           shape, non_uniform, non_uniform_coords_file.c_str(),
-                           tol, s, mode, reorder, lossless_level, dev_type,
-                           num_dev, verbose);
+  for (int repeat_iter = 0; repeat_iter < repeat; repeat_iter++) {
+    if (dtype == mgard_x::data_type::Double) {
+      launch_compress<double>(
+          D, dtype, input_file.c_str(), output_file.c_str(), shape, non_uniform,
+          non_uniform_coords_file.c_str(), tol, s, mode, reorder,
+          lossless_level, domain_decomposition, dev_type, num_dev, verbose,
+          prefetch, max_memory_footprint);
+    } else if (dtype == mgard_x::data_type::Float) {
+      launch_compress<float>(
+          D, dtype, input_file.c_str(), output_file.c_str(), shape, non_uniform,
+          non_uniform_coords_file.c_str(), tol, s, mode, reorder,
+          lossless_level, domain_decomposition, dev_type, num_dev, verbose,
+          prefetch, max_memory_footprint);
+    }
   }
   return true;
 }
@@ -580,10 +625,22 @@ bool try_decompression(int argc, char *argv[]) {
     num_dev = get_arg_int(argc, argv, "-g");
   }
 
+  int repeat = 1;
+  if (has_arg(argc, argv, "-p")) {
+    repeat = get_arg_int(argc, argv, "-p");
+  }
+
+  bool prefetch = true;
+  if (has_arg(argc, argv, "-h")) {
+    prefetch = get_arg_int(argc, argv, "-h") == 1 ? true : false;
+  }
+
   if (verbose)
     std::cout << mgard_x::log::log_info << "verbose: enabled.\n";
-  launch_decompress(input_file.c_str(), output_file.c_str(), dev_type, num_dev,
-                    verbose);
+  for (int repeat_iter = 0; repeat_iter < repeat; repeat_iter++) {
+    launch_decompress(input_file.c_str(), output_file.c_str(), dev_type,
+                      num_dev, verbose, prefetch);
+  }
   return true;
 }
 

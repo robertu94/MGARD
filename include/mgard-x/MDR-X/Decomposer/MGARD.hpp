@@ -1,67 +1,67 @@
 #ifndef _MDR_MGARD_DECOMPOSER_HPP
 #define _MDR_MGARD_DECOMPOSER_HPP
 
-#include "../../DataRefactoring/DataRefactoring.hpp"
+#include "../../DataRefactoring/DataRefactor.hpp"
 #include "DecomposerInterface.hpp"
-#include "decompose.hpp"
-#include "recompose.hpp"
+// #include "decompose.hpp"
+// #include "recompose.hpp"
 #include <cstring>
-namespace MDR {
-// MGARD decomposer with orthogonal basis
-template <typename T>
-class MGARDOrthoganalDecomposer : public concepts::DecomposerInterface<T> {
-public:
-  MGARDOrthoganalDecomposer() {}
-  void decompose(T *data, const std::vector<uint32_t> &dimensions,
-                 uint32_t target_level) const {
-    MGARD::Decomposer<T> decomposer;
-    std::vector<size_t> dims(dimensions.size());
-    for (int i = 0; i < dims.size(); i++) {
-      dims[i] = dimensions[i];
-    }
-    decomposer.decompose(data, dims, target_level);
-  }
-  void recompose(T *data, const std::vector<uint32_t> &dimensions,
-                 uint32_t target_level) const {
-    MGARD::Recomposer<T> recomposer;
-    std::vector<size_t> dims(dimensions.size());
-    for (int i = 0; i < dims.size(); i++) {
-      dims[i] = dimensions[i];
-    }
-    recomposer.recompose(data, dims, target_level);
-  }
-  void print() const {
-    std::cout << "MGARD orthogonal decomposer" << std::endl;
-  }
-};
-// MGARD decomposer with hierarchical basis
-template <typename T>
-class MGARDHierarchicalDecomposer : public concepts::DecomposerInterface<T> {
-public:
-  MGARDHierarchicalDecomposer() {}
-  void decompose(T *data, const std::vector<uint32_t> &dimensions,
-                 uint32_t target_level) const {
-    MGARD::Decomposer<T> decomposer;
-    std::vector<size_t> dims(dimensions.size());
-    for (int i = 0; i < dims.size(); i++) {
-      dims[i] = dimensions[i];
-    }
-    decomposer.decompose(data, dims, target_level, true);
-  }
-  void recompose(T *data, const std::vector<uint32_t> &dimensions,
-                 uint32_t target_level) const {
-    MGARD::Recomposer<T> recomposer;
-    std::vector<size_t> dims(dimensions.size());
-    for (int i = 0; i < dims.size(); i++) {
-      dims[i] = dimensions[i];
-    }
-    recomposer.recompose(data, dims, target_level, true);
-  }
-  void print() const {
-    std::cout << "MGARD hierarchical decomposer" << std::endl;
-  }
-};
-} // namespace MDR
+// namespace MDR {
+// // MGARD decomposer with orthogonal basis
+// template <typename T>
+// class MGARDOrthoganalDecomposer : public concepts::DecomposerInterface<T> {
+// public:
+//   MGARDOrthoganalDecomposer() {}
+//   void decompose(T *data, const std::vector<uint32_t> &dimensions,
+//                  uint32_t target_level) const {
+//     MGARD::Decomposer<T> decomposer;
+//     std::vector<size_t> dims(dimensions.size());
+//     for (int i = 0; i < dims.size(); i++) {
+//       dims[i] = dimensions[i];
+//     }
+//     decomposer.decompose(data, dims, target_level);
+//   }
+//   void recompose(T *data, const std::vector<uint32_t> &dimensions,
+//                  uint32_t target_level) const {
+//     MGARD::Recomposer<T> recomposer;
+//     std::vector<size_t> dims(dimensions.size());
+//     for (int i = 0; i < dims.size(); i++) {
+//       dims[i] = dimensions[i];
+//     }
+//     recomposer.recompose(data, dims, target_level);
+//   }
+//   void print() const {
+//     std::cout << "MGARD orthogonal decomposer" << std::endl;
+//   }
+// };
+// // MGARD decomposer with hierarchical basis
+// template <typename T>
+// class MGARDHierarchicalDecomposer : public concepts::DecomposerInterface<T> {
+// public:
+//   MGARDHierarchicalDecomposer() {}
+//   void decompose(T *data, const std::vector<uint32_t> &dimensions,
+//                  uint32_t target_level) const {
+//     MGARD::Decomposer<T> decomposer;
+//     std::vector<size_t> dims(dimensions.size());
+//     for (int i = 0; i < dims.size(); i++) {
+//       dims[i] = dimensions[i];
+//     }
+//     decomposer.decompose(data, dims, target_level, true);
+//   }
+//   void recompose(T *data, const std::vector<uint32_t> &dimensions,
+//                  uint32_t target_level) const {
+//     MGARD::Recomposer<T> recomposer;
+//     std::vector<size_t> dims(dimensions.size());
+//     for (int i = 0; i < dims.size(); i++) {
+//       dims[i] = dimensions[i];
+//     }
+//     recomposer.recompose(data, dims, target_level, true);
+//   }
+//   void print() const {
+//     std::cout << "MGARD hierarchical decomposer" << std::endl;
+//   }
+// };
+// } // namespace MDR
 
 namespace mgard_x {
 namespace MDR {
@@ -70,28 +70,30 @@ template <DIM D, typename T, typename DeviceType>
 class MGARDOrthoganalDecomposer
     : public concepts::DecomposerInterface<D, T, DeviceType> {
 public:
-  MGARDOrthoganalDecomposer(Hierarchy<D, T, DeviceType> &hierarchy)
-      : hierarchy(hierarchy) {}
-  void decompose(SubArray<D, T, DeviceType> v, SIZE target_level,
-                 int queue_idx) const {
-    mgard_x::DataRefactoringWorkspace<D, T, DeviceType> workspace(hierarchy);
-    mgard_x::decompose<D, T, DeviceType>(
-        hierarchy, v, workspace.refactoring_w_subarray,
-        workspace.refactoring_b_subarray, 0, queue_idx);
+  MGARDOrthoganalDecomposer(Hierarchy<D, T, DeviceType> hierarchy)
+      : hierarchy(hierarchy), refactor(hierarchy, Config()) {}
+  static size_t EstimateMemoryFootprint(std::vector<SIZE> shape) {
+    size_t size = 0;
+    Hierarchy<D, T, DeviceType> hierarchy;
+    size += hierarchy.estimate_memory_usgae(shape);
+    size += DataRefactor<D, T, DeviceType>::EstimateMemoryFootprint(shape);
+    return size;
   }
-  void recompose(SubArray<D, T, DeviceType> v, SIZE target_level,
-                 int queue_idx) const {
-    mgard_x::DataRefactoringWorkspace<D, T, DeviceType> workspace(hierarchy);
-    mgard_x::recompose<D, T, DeviceType>(
-        hierarchy, v, workspace.refactoring_w_subarray,
-        workspace.refactoring_b_subarray, hierarchy.l_target(), queue_idx);
+  void decompose(Array<D, T, DeviceType> &v, int start_level, int stop_level,
+                 int queue_idx) {
+    refactor.Decompose(v, start_level, stop_level, queue_idx);
+  }
+  void recompose(Array<D, T, DeviceType> &v, int start_level, int stop_level,
+                 int queue_idx) {
+    refactor.Recompose(v, start_level, stop_level, queue_idx);
   }
   void print() const {
     std::cout << "MGARD orthogonal decomposer" << std::endl;
   }
 
 private:
-  Hierarchy<D, T, DeviceType> &hierarchy;
+  Hierarchy<D, T, DeviceType> hierarchy;
+  DataRefactor<D, T, DeviceType> refactor;
 };
 
 } // namespace MDR

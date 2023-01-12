@@ -342,11 +342,11 @@ public:
       delete[] queues[d];
     }
     delete[] queues;
-    queues = NULL;
+    queues = nullptr;
   }
 
   int NumDevices;
-  sycl::queue **queues = NULL;
+  sycl::queue **queues = nullptr;
 };
 
 extern int sycl_dev_id;
@@ -505,7 +505,7 @@ public:
       DeviceRuntime<SYCL>::SyncQueue(queue_idx);
     }
     sycl::queue q = DeviceRuntime<SYCL>::GetQueue(queue_idx);
-    if (ptr == NULL)
+    if (ptr == nullptr)
       return;
     sycl::free(ptr, q);
     if (queue_idx == MGARDX_SYNCHRONIZED_QUEUE) {
@@ -584,7 +584,7 @@ public:
       DeviceRuntime<SYCL>::SyncQueue(queue_idx);
     }
     sycl::queue q = DeviceRuntime<SYCL>::GetQueue(queue_idx);
-    if (ptr == NULL)
+    if (ptr == nullptr)
       return;
     sycl::free(ptr, q);
     if (queue_idx == MGARDX_SYNCHRONIZED_QUEUE) {
@@ -683,11 +683,11 @@ public:
   static bool ReduceMemoryFootprint;
 };
 
-template <typename FunctorType> class Kernel {
+template <typename FunctorType> class SyclKernel {
 public:
-  Kernel(FunctorType functor, LocalMemory localAccess, THREAD_IDX ngridz,
-         THREAD_IDX ngridy, THREAD_IDX ngridx, THREAD_IDX nblockz,
-         THREAD_IDX nblocky, THREAD_IDX nblockx)
+  SyclKernel(FunctorType functor, LocalMemory localAccess, THREAD_IDX ngridz,
+             THREAD_IDX ngridy, THREAD_IDX ngridx, THREAD_IDX nblockz,
+             THREAD_IDX nblocky, THREAD_IDX nblockx)
       : functor(functor), localAccess(localAccess), ngridz(ngridz),
         ngridy(ngridy), ngridx(ngridx), nblockz(nblockz), nblocky(nblocky),
         nblockx(nblockx) {}
@@ -745,11 +745,11 @@ private:
   THREAD_IDX nblockx;
 };
 
-template <typename FunctorType> class IterKernel {
+template <typename FunctorType> class SyclIterKernel {
 public:
-  IterKernel(FunctorType functor, LocalMemory localAccess, THREAD_IDX ngridz,
-             THREAD_IDX ngridy, THREAD_IDX ngridx, THREAD_IDX nblockz,
-             THREAD_IDX nblocky, THREAD_IDX nblockx)
+  SyclIterKernel(FunctorType functor, LocalMemory localAccess,
+                 THREAD_IDX ngridz, THREAD_IDX ngridy, THREAD_IDX ngridx,
+                 THREAD_IDX nblockz, THREAD_IDX nblocky, THREAD_IDX nblockx)
       : functor(functor), localAccess(localAccess), ngridz(ngridz),
         ngridy(ngridy), ngridx(ngridx), nblockz(nblockz), nblocky(nblocky),
         nblockx(nblockx) {}
@@ -927,12 +927,12 @@ SINGLE_KERNEL_1D(Operation14);
 
 #undef SINGLE_KERNEL_1D
 
-template <typename FunctorType> class ParallelMergeKernel {
+template <typename FunctorType> class SyclParallelMergeKernel {
 public:
-  ParallelMergeKernel(FunctorType functor, LocalMemory localAccess,
-                      THREAD_IDX ngridz, THREAD_IDX ngridy, THREAD_IDX ngridx,
-                      THREAD_IDX nblockz, THREAD_IDX nblocky,
-                      THREAD_IDX nblockx)
+  SyclParallelMergeKernel(FunctorType functor, LocalMemory localAccess,
+                          THREAD_IDX ngridz, THREAD_IDX ngridy,
+                          THREAD_IDX ngridx, THREAD_IDX nblockz,
+                          THREAD_IDX nblocky, THREAD_IDX nblockx)
       : functor(functor), localAccess(localAccess), ngridz(ngridz),
         ngridy(ngridy), ngridx(ngridx), nblockz(nblockz), nblocky(nblocky),
         nblockx(nblockx) {}
@@ -981,8 +981,8 @@ private:
   THREAD_IDX nblockx;
 };
 
-template <typename Task> void HuffmanCLCustomizedNoCGKernel(Task task) {
-  // std::cout << "calling HuffmanCLCustomizedNoCGKernel\n";
+template <typename Task> void SyclHuffmanCLCustomizedNoCGKernel(Task task) {
+  // std::cout << "calling SyclHuffmanCLCustomizedNoCGKernel\n";
 #if MGARD_X_SYCL_ND_RANGE_3D
   sycl::range global_threads(task.GetBlockDimX() * task.GetGridDimX(),
                              task.GetBlockDimY() * task.GetGridDimY(),
@@ -1078,13 +1078,13 @@ template <typename Task> void HuffmanCLCustomizedNoCGKernel(Task task) {
     if (task.GetFunctor().BranchCondition1()) {
       DeviceRuntime<SYCL>::SyncQueue(task.GetQueueIdx());
 
-      // std::cout << "calling ParallelMergeKernel\n";
+      // std::cout << "calling SyclParallelMergeKernel\n";
       q.submit([&](sycl::handler &h) {
         LocalMemory localAccess{sm_size, h};
-        ParallelMergeKernel kernel(task.GetFunctor(), localAccess,
-                                   task.GetGridDimZ(), task.GetGridDimY(),
-                                   task.GetGridDimX(), task.GetBlockDimZ(),
-                                   task.GetBlockDimY(), task.GetBlockDimX());
+        SyclParallelMergeKernel kernel(
+            task.GetFunctor(), localAccess, task.GetGridDimZ(),
+            task.GetGridDimY(), task.GetGridDimX(), task.GetBlockDimZ(),
+            task.GetBlockDimY(), task.GetBlockDimX());
         h.parallel_for(sycl::nd_range{global_threads, local_threads}, kernel);
       });
       DeviceRuntime<SYCL>::SyncQueue(task.GetQueueIdx());
@@ -1171,8 +1171,8 @@ template <typename Task> void HuffmanCLCustomizedNoCGKernel(Task task) {
   }
 }
 
-template <typename Task> void HuffmanCWCustomizedNoCGKernel(Task task) {
-  // std::cout << "calling HuffmanCWCustomizedNoCGKernel\n";
+template <typename Task> void SyclHuffmanCWCustomizedNoCGKernel(Task task) {
+  // std::cout << "calling SyclHuffmanCWCustomizedNoCGKernel\n";
 #if MGARD_X_SYCL_ND_RANGE_3D
   sycl::range global_threads(task.GetBlockDimX() * task.GetGridDimX(),
                              task.GetBlockDimY() * task.GetGridDimY(),
@@ -1452,28 +1452,28 @@ public:
                                   typename TaskType::Functor>::value) {
       q.submit([&](sycl::handler &h) {
         LocalMemory localAccess{sm_size, h};
-        Kernel kernel(task.GetFunctor(), localAccess, task.GetGridDimZ(),
-                      task.GetGridDimY(), task.GetGridDimX(),
-                      task.GetBlockDimZ(), task.GetBlockDimY(),
-                      task.GetBlockDimX());
+        SyclKernel kernel(task.GetFunctor(), localAccess, task.GetGridDimZ(),
+                          task.GetGridDimY(), task.GetGridDimX(),
+                          task.GetBlockDimZ(), task.GetBlockDimY(),
+                          task.GetBlockDimX());
         h.parallel_for(sycl::nd_range{global_threads, local_threads}, kernel);
       });
     } else if constexpr (std::is_base_of<IterFunctor<SYCL>,
                                          typename TaskType::Functor>::value) {
       q.submit([&](sycl::handler &h) {
         LocalMemory localAccess{sm_size, h};
-        IterKernel kernel(task.GetFunctor(), localAccess, task.GetGridDimZ(),
-                          task.GetGridDimY(), task.GetGridDimX(),
-                          task.GetBlockDimZ(), task.GetBlockDimY(),
-                          task.GetBlockDimX());
+        SyclIterKernel kernel(task.GetFunctor(), localAccess,
+                              task.GetGridDimZ(), task.GetGridDimY(),
+                              task.GetGridDimX(), task.GetBlockDimZ(),
+                              task.GetBlockDimY(), task.GetBlockDimX());
         h.parallel_for(sycl::nd_range{global_threads, local_threads}, kernel);
       });
     } else if constexpr (std::is_base_of<HuffmanCLCustomizedFunctor<SYCL>,
                                          typename TaskType::Functor>::value) {
-      HuffmanCLCustomizedNoCGKernel(task);
+      SyclHuffmanCLCustomizedNoCGKernel(task);
     } else if constexpr (std::is_base_of<HuffmanCWCustomizedFunctor<SYCL>,
                                          typename TaskType::Functor>::value) {
-      HuffmanCWCustomizedNoCGKernel(task);
+      SyclHuffmanCWCustomizedNoCGKernel(task);
     }
     if (DeviceRuntime<SYCL>::SyncAllKernelsAndCheckErrors) {
       DeviceRuntime<SYCL>::SyncQueue(task.GetQueueIdx());
@@ -1496,6 +1496,206 @@ public:
   }
 };
 
+template <> class DeviceLauncher<SYCL> {
+public:
+  template <typename TaskType>
+  MGARDX_CONT int static IsResourceEnough(TaskType &task) {
+    if (task.GetBlockDimX() * task.GetBlockDimY() * task.GetBlockDimZ() >
+        DeviceRuntime<SYCL>::GetMaxNumThreadsPerTB()) {
+      return THREADBLOCK_TOO_LARGE;
+    }
+    if (task.GetSharedMemorySize() >
+        DeviceRuntime<SYCL>::GetMaxSharedMemorySize()) {
+      return SHARED_MEMORY_TOO_LARGE;
+    }
+    return RESOURCE_ENOUGH;
+  }
+
+  template <typename TaskType>
+  MGARDX_CONT ExecutionReturn static Execute(TaskType &task) {
+#if MGARD_X_SYCL_ND_RANGE_3D
+    sycl::range global_threads(task.GetBlockDimX() * task.GetGridDimX(),
+                               task.GetBlockDimY() * task.GetGridDimY(),
+                               task.GetBlockDimZ() * task.GetGridDimZ());
+
+    sycl::range local_threads(task.GetBlockDimX(), task.GetBlockDimY(),
+                              task.GetBlockDimZ());
+#endif
+#if MGARD_X_SYCL_ND_RANGE_1D
+    sycl::range global_threads(task.GetBlockDimX() * task.GetGridDimX() *
+                                   task.GetBlockDimY() * task.GetGridDimY() *
+                                   task.GetBlockDimZ() * task.GetGridDimZ(),
+                               1, 1);
+
+    sycl::range local_threads(
+        task.GetBlockDimX() * task.GetBlockDimY() * task.GetBlockDimZ(), 1, 1);
+#endif
+    size_t sm_size = task.GetSharedMemorySize();
+    if (sm_size == 0)
+      sm_size = 1; // avoid -51 (CL_INVALID_ARG_SIZE) error
+
+    sycl::queue q = DeviceRuntime<SYCL>::GetQueue(task.GetQueueIdx());
+
+    if (DeviceRuntime<SYCL>::PrintKernelConfig) {
+#if MGARD_X_SYCL_ND_RANGE_3D
+      std::cout << log::log_info << task.GetFunctorName() << ": <"
+                << task.GetBlockDimX() << ", " << task.GetBlockDimY() << ", "
+                << task.GetBlockDimZ() << "> <" << task.GetGridDimX() << ", "
+                << task.GetGridDimY() << ", " << task.GetGridDimZ() << ">\n";
+#endif
+#if MGARD_X_SYCL_ND_RANGE_1D
+      std::cout << log::log_info << task.GetFunctorName() << ": <"
+                << task.GetBlockDimX() * task.GetBlockDimY() *
+                       task.GetBlockDimZ()
+                << ", " << 1 << ", " << 1 << "> <"
+                << task.GetGridDimX() * task.GetGridDimY() * task.GetGridDimZ()
+                << ", " << 1 << ", " << 1 << ">\n";
+#endif
+    }
+
+    ExecutionReturn ret;
+    if (IsResourceEnough(task) != RESOURCE_ENOUGH) {
+      if (DeviceRuntime<SYCL>::PrintKernelConfig) {
+        if (IsResourceEnough(task) == THREADBLOCK_TOO_LARGE) {
+          log::info("threadblock too large.");
+        }
+        if (IsResourceEnough(task) == SHARED_MEMORY_TOO_LARGE) {
+          log::info("shared memory too large.");
+        }
+      }
+      ret.success = false;
+      ret.execution_time = std::numeric_limits<double>::max();
+      return ret;
+    }
+
+    Timer timer;
+    if (task.GetQueueIdx() == MGARDX_SYNCHRONIZED_QUEUE ||
+        DeviceRuntime<SYCL>::TimingAllKernels ||
+        AutoTuner<SYCL>::ProfileKernels) {
+      DeviceRuntime<SYCL>::SyncDevice();
+      timer.start();
+    }
+
+    // if constexpr evaluate at compile time otherwise this does not compile
+    if constexpr (std::is_base_of<Functor<SYCL>,
+                                  typename TaskType::Functor>::value) {
+      q.submit([&](sycl::handler &h) {
+        LocalMemory localAccess{sm_size, h};
+        SyclKernel kernel(task.GetFunctor(), localAccess, task.GetGridDimZ(),
+                          task.GetGridDimY(), task.GetGridDimX(),
+                          task.GetBlockDimZ(), task.GetBlockDimY(),
+                          task.GetBlockDimX());
+        h.parallel_for(sycl::nd_range{global_threads, local_threads}, kernel);
+      });
+    } else if constexpr (std::is_base_of<IterFunctor<SYCL>,
+                                         typename TaskType::Functor>::value) {
+      q.submit([&](sycl::handler &h) {
+        LocalMemory localAccess{sm_size, h};
+        SyclIterKernel kernel(task.GetFunctor(), localAccess,
+                              task.GetGridDimZ(), task.GetGridDimY(),
+                              task.GetGridDimX(), task.GetBlockDimZ(),
+                              task.GetBlockDimY(), task.GetBlockDimX());
+        h.parallel_for(sycl::nd_range{global_threads, local_threads}, kernel);
+      });
+    } else if constexpr (std::is_base_of<HuffmanCLCustomizedFunctor<SYCL>,
+                                         typename TaskType::Functor>::value) {
+      SyclHuffmanCLCustomizedNoCGKernel(task);
+    } else if constexpr (std::is_base_of<HuffmanCWCustomizedFunctor<SYCL>,
+                                         typename TaskType::Functor>::value) {
+      SyclHuffmanCWCustomizedNoCGKernel(task);
+    }
+    if (DeviceRuntime<SYCL>::SyncAllKernelsAndCheckErrors) {
+      DeviceRuntime<SYCL>::SyncQueue(task.GetQueueIdx());
+    }
+
+    if (task.GetQueueIdx() == MGARDX_SYNCHRONIZED_QUEUE ||
+        DeviceRuntime<SYCL>::TimingAllKernels ||
+        AutoTuner<SYCL>::ProfileKernels) {
+      DeviceRuntime<SYCL>::SyncDevice();
+      timer.end();
+      if (DeviceRuntime<SYCL>::TimingAllKernels) {
+        timer.print(task.GetFunctorName());
+      }
+      if (AutoTuner<SYCL>::ProfileKernels) {
+        ret.success = true;
+        ret.execution_time = timer.get();
+      }
+    }
+    return ret;
+  }
+
+  template <typename TaskType>
+  MGARDX_CONT static void ConfigTask(TaskType task) {
+    typename TaskType::Functor functor;
+    int maxbytes = DeviceRuntime<SYCL>::GetMaxSharedMemorySize();
+    DeviceRuntime<SYCL>::SetMaxDynamicSharedMemorySize(functor, maxbytes);
+  }
+
+  template <typename KernelType>
+  MGARDX_CONT static void AutoTune(KernelType kernel, int queue_idx) {
+#if MGARD_ENABLE_AUTO_TUNING
+    double min_time = std::numeric_limits<double>::max();
+    int min_config = 0;
+    ExecutionReturn ret;
+#define RUN_CONFIG(CONFIG_IDX)                                                 \
+  {                                                                            \
+    constexpr ExecutionConfig config =                                         \
+        GetExecutionConfig<KernelType::NumDim>(CONFIG_IDX);                    \
+    auto task =                                                                \
+        kernel.template GenTask<config.z, config.y, config.x>(queue_idx);      \
+    ret = Execute(task);                                                       \
+    if constexpr (KernelType::EnableConfig()) {                                \
+      ConfigTask(task);                                                        \
+    }                                                                          \
+    if (ret.success && min_time > ret.execution_time) {                        \
+      min_time = ret.execution_time;                                           \
+      min_config = CONFIG_IDX;                                                 \
+    }                                                                          \
+  }
+    RUN_CONFIG(0)
+    RUN_CONFIG(1)
+    RUN_CONFIG(2)
+    RUN_CONFIG(3)
+    RUN_CONFIG(4)
+    RUN_CONFIG(5)
+    RUN_CONFIG(6)
+#undef RUN_CONFIG
+    if (AutoTuner<SYCL>::WriteToTable) {
+      FillAutoTunerTable<KernelType::NumDim, typename KernelType::DataType,
+                         SYCL>(std::string(KernelType::Name), min_config);
+    }
+#else
+    log::err("MGARD is not built with auto tuning enabled.");
+    exit(-1);
+#endif
+  }
+
+  template <typename KernelType>
+  MGARDX_CONT static void Execute(KernelType kernel, int queue_idx) {
+    if constexpr (KernelType::EnableAutoTuning()) {
+      constexpr ExecutionConfig config =
+          GetExecutionConfig<KernelType::NumDim, typename KernelType::DataType,
+                             SYCL>(KernelType::Name);
+      auto task =
+          kernel.template GenTask<config.z, config.y, config.x>(queue_idx);
+      if constexpr (KernelType::EnableConfig()) {
+        ConfigTask(task);
+      }
+      Execute(task);
+
+      if (AutoTuner<SYCL>::ProfileKernels) {
+        AutoTune(kernel, queue_idx);
+      }
+    } else {
+      auto task = kernel.GenTask(queue_idx);
+      if constexpr (KernelType::EnableConfig()) {
+        ConfigTask(task);
+      }
+      Execute(task);
+    }
+  }
+};
+
 template <typename T> struct AbsMaxOp {
   T operator()(const T &a, const T &b) const {
     return (fabs(b) > fabs(a)) ? fabs(b) : fabs(a);
@@ -1512,88 +1712,111 @@ public:
   DeviceCollective(){};
 
   template <typename T>
-  MGARDX_CONT static void Sum(SIZE n, SubArray<1, T, SYCL> &v,
-                              SubArray<1, T, SYCL> &result, int queue_idx) {
-
-    sycl::queue q = DeviceRuntime<SYCL>::GetQueue(queue_idx);
-    q.submit([&](sycl::handler &h) {
-      T *res = result.data();
-      T *input = v.data();
-      h.parallel_for(sycl::range{n},
-                     sycl::reduction(res, (T)0, sycl::plus<T>()),
-                     [=](sycl::id<1> i, auto &res) { res.combine(input[i]); });
-    });
-    DeviceRuntime<SYCL>::SyncDevice();
+  MGARDX_CONT static void Sum(SIZE n, SubArray<1, T, SYCL> v,
+                              SubArray<1, T, SYCL> result,
+                              Array<1, Byte, SYCL> &workspace, int queue_idx) {
+    if (workspace.hasDeviceAllocation()) {
+      sycl::queue q = DeviceRuntime<SYCL>::GetQueue(queue_idx);
+      q.submit([&](sycl::handler &h) {
+        T *res = result.data();
+        T *input = v.data();
+        h.parallel_for(
+            sycl::range{n}, sycl::reduction(res, (T)0, sycl::plus<T>()),
+            [=](sycl::id<1> i, auto &res) { res.combine(input[i]); });
+      });
+      DeviceRuntime<SYCL>::SyncDevice();
+    } else {
+      workspace = Array<1, Byte, SYCL>({(SIZE)1});
+    }
   }
 
   template <typename T>
-  MGARDX_CONT static void AbsMax(SIZE n, SubArray<1, T, SYCL> &v,
-                                 SubArray<1, T, SYCL> &result, int queue_idx) {
-    sycl::queue q = DeviceRuntime<SYCL>::GetQueue(queue_idx);
-    q.submit([&](sycl::handler &h) {
-      T *res = result.data();
-      T *input = v.data();
-      h.parallel_for(sycl::range{n}, sycl::reduction(res, (T)0, AbsMaxOp<T>()),
-                     [=](sycl::id<1> i, auto &res) { res.combine(input[i]); });
-    });
-    DeviceRuntime<SYCL>::SyncDevice();
+  MGARDX_CONT static void
+  AbsMax(SIZE n, SubArray<1, T, SYCL> v, SubArray<1, T, SYCL> result,
+         Array<1, Byte, SYCL> &workspace, int queue_idx) {
+    if (workspace.hasDeviceAllocation()) {
+      sycl::queue q = DeviceRuntime<SYCL>::GetQueue(queue_idx);
+      q.submit([&](sycl::handler &h) {
+        T *res = result.data();
+        T *input = v.data();
+        h.parallel_for(
+            sycl::range{n}, sycl::reduction(res, (T)0, AbsMaxOp<T>()),
+            [=](sycl::id<1> i, auto &res) { res.combine(input[i]); });
+      });
+      DeviceRuntime<SYCL>::SyncDevice();
+    } else {
+      workspace = Array<1, Byte, SYCL>({(SIZE)1});
+    }
   }
 
   template <typename T>
-  MGARDX_CONT static void SquareSum(SIZE n, SubArray<1, T, SYCL> &v,
-                                    SubArray<1, T, SYCL> &result,
-                                    int queue_idx) {
-    sycl::queue q = DeviceRuntime<SYCL>::GetQueue(queue_idx);
-    q.submit([&](sycl::handler &h) {
-      T *res = result.data();
-      T *input = v.data();
-      h.parallel_for(
-          sycl::range{n}, sycl::reduction(res, (T)0, sycl::plus<T>()),
-          [=](sycl::id<1> i, auto &res) { res.combine(input[i] * input[i]); });
-    });
-    DeviceRuntime<SYCL>::SyncDevice();
+  MGARDX_CONT static void
+  SquareSum(SIZE n, SubArray<1, T, SYCL> v, SubArray<1, T, SYCL> result,
+            Array<1, Byte, SYCL> &workspace, int queue_idx) {
+    if (workspace.hasDeviceAllocation()) {
+      sycl::queue q = DeviceRuntime<SYCL>::GetQueue(queue_idx);
+      q.submit([&](sycl::handler &h) {
+        T *res = result.data();
+        T *input = v.data();
+        h.parallel_for(sycl::range{n},
+                       sycl::reduction(res, (T)0, sycl::plus<T>()),
+                       [=](sycl::id<1> i, auto &res) {
+                         res.combine(input[i] * input[i]);
+                       });
+      });
+      DeviceRuntime<SYCL>::SyncDevice();
+    } else {
+      workspace = Array<1, Byte, SYCL>({(SIZE)1});
+    }
   }
 
   template <typename T>
-  MGARDX_CONT static void ScanSumInclusive(SIZE n, SubArray<1, T, SYCL> &v,
-                                           SubArray<1, T, SYCL> &result,
-                                           int queue_idx) {}
+  MGARDX_CONT static void
+  ScanSumInclusive(SIZE n, SubArray<1, T, SYCL> v, SubArray<1, T, SYCL> result,
+                   Array<1, Byte, SYCL> &workspace, int queue_idx) {}
 
   template <typename T>
-  MGARDX_CONT static void ScanSumExclusive(SIZE n, SubArray<1, T, SYCL> &v,
-                                           SubArray<1, T, SYCL> &result,
-                                           int queue_idx) {}
+  MGARDX_CONT static void
+  ScanSumExclusive(SIZE n, SubArray<1, T, SYCL> v, SubArray<1, T, SYCL> result,
+                   Array<1, Byte, SYCL> &workspace, int queue_idx) {}
 
   template <typename T>
-  MGARDX_CONT static void ScanSumExtended(SIZE n, SubArray<1, T, SYCL> &v,
-                                          SubArray<1, T, SYCL> &result,
-                                          int queue_idx) {}
+  MGARDX_CONT static void
+  ScanSumExtended(SIZE n, SubArray<1, T, SYCL> v, SubArray<1, T, SYCL> result,
+                  Array<1, Byte, SYCL> &workspace, int queue_idx) {}
 
   template <typename KeyT, typename ValueT>
-  MGARDX_CONT static void SortByKey(SIZE n, SubArray<1, KeyT, SYCL> &keys,
-                                    SubArray<1, ValueT, SYCL> &values,
+  MGARDX_CONT static void SortByKey(SIZE n, SubArray<1, KeyT, SYCL> in_keys,
+                                    SubArray<1, ValueT, SYCL> in_values,
+                                    SubArray<1, KeyT, SYCL> out_keys,
+                                    SubArray<1, ValueT, SYCL> out_values,
+                                    Array<1, Byte, SYCL> &workspace,
                                     int queue_idx) {
-    KeyT *keys_array = new KeyT[n];
-    ValueT *values_array = new ValueT[n];
-    MemoryManager<SYCL>::Copy1D(keys_array, keys.data(), n, 0);
-    MemoryManager<SYCL>::Copy1D(values_array, values.data(), n, 0);
-    DeviceRuntime<SYCL>::SyncQueue(0);
+    if (workspace.hasDeviceAllocation()) {
+      KeyT *keys_array = new KeyT[n];
+      ValueT *values_array = new ValueT[n];
+      MemoryManager<SYCL>::Copy1D(keys_array, in_keys.data(), n, 0);
+      MemoryManager<SYCL>::Copy1D(values_array, in_values.data(), n, 0);
+      DeviceRuntime<SYCL>::SyncQueue(0);
 
-    std::vector<std::pair<KeyT, ValueT>> data(n);
-    for (SIZE i = 0; i < n; ++i) {
-      data[i] = std::pair<KeyT, ValueT>(keys_array[i], values_array[i]);
+      std::vector<std::pair<KeyT, ValueT>> data(n);
+      for (SIZE i = 0; i < n; ++i) {
+        data[i] = std::pair<KeyT, ValueT>(keys_array[i], values_array[i]);
+      }
+      std::stable_sort(data.begin(), data.end(),
+                       KeyValueComparator<KeyT, ValueT>{});
+      for (SIZE i = 0; i < n; ++i) {
+        keys_array[i] = data[i].first;
+        values_array[i] = data[i].second;
+      }
+      MemoryManager<SYCL>::Copy1D(out_keys.data(), keys_array, n, 0);
+      MemoryManager<SYCL>::Copy1D(out_values.data(), values_array, n, 0);
+      DeviceRuntime<SYCL>::SyncDevice();
+      delete[] keys_array;
+      delete[] values_array;
+    } else {
+      workspace = Array<1, Byte, SYCL>({(SIZE)1});
     }
-    std::stable_sort(data.begin(), data.end(),
-                     KeyValueComparator<KeyT, ValueT>{});
-    for (SIZE i = 0; i < n; ++i) {
-      keys_array[i] = data[i].first;
-      values_array[i] = data[i].second;
-    }
-    MemoryManager<SYCL>::Copy1D(keys.data(), keys_array, n, 0);
-    MemoryManager<SYCL>::Copy1D(values.data(), values_array, n, 0);
-    DeviceRuntime<SYCL>::SyncDevice();
-    delete[] keys_array;
-    delete[] values_array;
   }
 
   template <typename KeyT, typename ValueT, typename BinaryOpType>

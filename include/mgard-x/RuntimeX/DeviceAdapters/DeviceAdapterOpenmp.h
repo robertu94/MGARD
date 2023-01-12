@@ -317,7 +317,7 @@ public:
     using converted_T =
         typename std::conditional<std::is_same<T, void>::value, Byte, T>::type;
     ptr = (T *)std::malloc(n * sizeof(converted_T));
-    if (ptr == NULL) {
+    if (ptr == nullptr) {
       log::err("MemoryManager<OPENMP>::Malloc1D error.");
     }
   }
@@ -330,7 +330,7 @@ public:
         typename std::conditional<std::is_same<T, void>::value, Byte, T>::type;
     ptr = (T *)std::malloc(n1 * n2 * sizeof(converted_T));
     ld = n1;
-    if (ptr == NULL) {
+    if (ptr == nullptr) {
       log::err("MemoryManager<OPENMP>::MallocND error.");
     }
   }
@@ -342,7 +342,7 @@ public:
     using converted_T =
         typename std::conditional<std::is_same<T, void>::value, Byte, T>::type;
     ptr = (T *)std::malloc(n * sizeof(converted_T));
-    if (ptr == NULL) {
+    if (ptr == nullptr) {
       log::err("MemoryManager<OPENMP>::MallocManaged1D error.");
     }
   }
@@ -351,7 +351,7 @@ public:
   MGARDX_CONT static void Free(T *ptr,
                                int queue_idx = MGARDX_SYNCHRONIZED_QUEUE) {
     log::dbg("Calling MemoryManager<OPENMP>::Free");
-    if (ptr == NULL)
+    if (ptr == nullptr)
       return;
     std::free(ptr);
   }
@@ -392,7 +392,7 @@ public:
     using converted_T =
         typename std::conditional<std::is_same<T, void>::value, Byte, T>::type;
     ptr = (T *)std::malloc(n * sizeof(converted_T));
-    if (ptr == NULL) {
+    if (ptr == nullptr) {
       log::err("MemoryManager<OPENMP>::MallocHost error.");
     }
   }
@@ -401,7 +401,7 @@ public:
   MGARDX_CONT static void FreeHost(T *ptr,
                                    int queue_idx = MGARDX_SYNCHRONIZED_QUEUE) {
     log::dbg("Calling MemoryManager<OPENMP>::FreeHost");
-    if (ptr == NULL)
+    if (ptr == nullptr)
       return;
     std::free(ptr);
   }
@@ -1219,90 +1219,282 @@ public:
   }
 };
 
+template <> class DeviceLauncher<OPENMP> {
+public:
+  template <typename TaskType>
+  MGARDX_CONT int static IsResourceEnough(TaskType &task) {
+    if (task.GetBlockDimX() * task.GetBlockDimY() * task.GetBlockDimZ() >
+        DeviceRuntime<OPENMP>::GetMaxNumThreadsPerTB()) {
+      return THREADBLOCK_TOO_LARGE;
+    }
+    if (task.GetSharedMemorySize() >
+        DeviceRuntime<OPENMP>::GetMaxSharedMemorySize()) {
+      return SHARED_MEMORY_TOO_LARGE;
+    }
+    return RESOURCE_ENOUGH;
+  }
+
+  template <typename TaskType>
+  MGARDX_CONT ExecutionReturn static Execute(TaskType &task) {
+    if (DeviceRuntime<OPENMP>::PrintKernelConfig) {
+      std::cout << log::log_info << task.GetFunctorName() << ": <"
+                << task.GetBlockDimX() << ", " << task.GetBlockDimY() << ", "
+                << task.GetBlockDimZ() << "> <" << task.GetGridDimX() << ", "
+                << task.GetGridDimY() << ", " << task.GetGridDimZ() << ">\n";
+    }
+
+    ExecutionReturn ret;
+    if (IsResourceEnough(task) != RESOURCE_ENOUGH) {
+      if (DeviceRuntime<OPENMP>::PrintKernelConfig) {
+        if (IsResourceEnough(task) == THREADBLOCK_TOO_LARGE) {
+          log::info("threadblock too large.");
+        }
+        if (IsResourceEnough(task) == SHARED_MEMORY_TOO_LARGE) {
+          log::info("shared memory too large.");
+        }
+      }
+      ret.success = false;
+      ret.execution_time = std::numeric_limits<double>::max();
+      return ret;
+    }
+
+    Timer timer;
+    if (DeviceRuntime<OPENMP>::TimingAllKernels ||
+        AutoTuner<OPENMP>::ProfileKernels) {
+      DeviceRuntime<OPENMP>::SyncDevice();
+      timer.start();
+    }
+    // if constexpr evalute at compile time otherwise this does not compile
+    if constexpr (std::is_base_of<Functor<OPENMP>,
+                                  typename TaskType::Functor>::value) {
+      OpenmpKernel(task);
+    } else if constexpr (std::is_base_of<IterFunctor<OPENMP>,
+                                         typename TaskType::Functor>::value) {
+      OpenmpIterKernel(task);
+    } else if constexpr (std::is_base_of<HuffmanCLCustomizedFunctor<OPENMP>,
+                                         typename TaskType::Functor>::value) {
+      int prev_omp_thread = omp_get_max_threads();
+      // This kernel works better with 4 threads
+      omp_set_num_threads(4);
+      OpenmpHuffmanCLCustomizedKernel(task);
+      omp_set_num_threads(prev_omp_thread);
+    } else if constexpr (std::is_base_of<HuffmanCWCustomizedFunctor<OPENMP>,
+                                         typename TaskType::Functor>::value) {
+      int prev_omp_thread = omp_get_max_threads();
+      // This kernel works better with 4 threads
+      omp_set_num_threads(4);
+      OpenmpHuffmanCWCustomizedKernel(task);
+      omp_set_num_threads(prev_omp_thread);
+    }
+    // timer.end();
+    // timer.print(task.GetFunctorName());
+    // timer.clear();
+    if (DeviceRuntime<OPENMP>::TimingAllKernels ||
+        AutoTuner<OPENMP>::ProfileKernels) {
+      DeviceRuntime<OPENMP>::SyncDevice();
+      timer.end();
+      if (DeviceRuntime<OPENMP>::TimingAllKernels) {
+        timer.print(task.GetFunctorName());
+      }
+      if (AutoTuner<OPENMP>::ProfileKernels) {
+        ret.success = true;
+        ret.execution_time = timer.get();
+      }
+    }
+    return ret;
+  }
+
+  template <typename TaskType>
+  MGARDX_CONT static void ConfigTask(TaskType task) {
+    typename TaskType::Functor functor;
+    int maxbytes = DeviceRuntime<OPENMP>::GetMaxSharedMemorySize();
+    DeviceRuntime<OPENMP>::SetMaxDynamicSharedMemorySize(functor, maxbytes);
+  }
+
+  template <typename KernelType>
+  MGARDX_CONT static void AutoTune(KernelType kernel, int queue_idx) {
+#if MGARD_ENABLE_AUTO_TUNING
+    double min_time = std::numeric_limits<double>::max();
+    int min_config = 0;
+    ExecutionReturn ret;
+#define RUN_CONFIG(CONFIG_IDX)                                                 \
+  {                                                                            \
+    constexpr ExecutionConfig config =                                         \
+        GetExecutionConfig<KernelType::NumDim>(CONFIG_IDX);                    \
+    auto task =                                                                \
+        kernel.template GenTask<config.z, config.y, config.x>(queue_idx);      \
+    ret = Execute(task);                                                       \
+    if constexpr (KernelType::EnableConfig()) {                                \
+      ConfigTask(task);                                                        \
+    }                                                                          \
+    if (ret.success && min_time > ret.execution_time) {                        \
+      min_time = ret.execution_time;                                           \
+      min_config = CONFIG_IDX;                                                 \
+    }                                                                          \
+  }
+    RUN_CONFIG(0)
+    RUN_CONFIG(1)
+    RUN_CONFIG(2)
+    RUN_CONFIG(3)
+    RUN_CONFIG(4)
+    RUN_CONFIG(5)
+    RUN_CONFIG(6)
+#undef RUN_CONFIG
+    if (AutoTuner<OPENMP>::WriteToTable) {
+      FillAutoTunerTable<KernelType::NumDim, typename KernelType::DataType,
+                         OPENMP>(std::string(KernelType::Name), min_config);
+    }
+#else
+    log::err("MGARD is not built with auto tuning enabled.");
+    exit(-1);
+#endif
+  }
+
+  template <typename KernelType>
+  MGARDX_CONT static void Execute(KernelType kernel, int queue_idx) {
+    if constexpr (KernelType::EnableAutoTuning()) {
+      constexpr ExecutionConfig config =
+          GetExecutionConfig<KernelType::NumDim, typename KernelType::DataType,
+                             OPENMP>(KernelType::Name);
+      auto task =
+          kernel.template GenTask<config.z, config.y, config.x>(queue_idx);
+      if constexpr (KernelType::EnableConfig()) {
+        ConfigTask(task);
+      }
+      Execute(task);
+
+      if (AutoTuner<OPENMP>::ProfileKernels) {
+        AutoTune(kernel, queue_idx);
+      }
+    } else {
+      auto task = kernel.GenTask(queue_idx);
+      if constexpr (KernelType::EnableConfig()) {
+        ConfigTask(task);
+      }
+      Execute(task);
+    }
+  }
+};
+
 template <> class DeviceCollective<OPENMP> {
 public:
   MGARDX_CONT
   DeviceCollective(){};
 
   template <typename T>
-  MGARDX_CONT static void Sum(SIZE n, SubArray<1, T, OPENMP> &v,
-                              SubArray<1, T, OPENMP> &result, int queue_idx) {
-    *result((IDX)0) = std::accumulate(v((IDX)0), v((IDX)n), 0);
-  }
-
-  template <typename T>
-  MGARDX_CONT static void AbsMax(SIZE n, SubArray<1, T, OPENMP> &v,
-                                 SubArray<1, T, OPENMP> &result,
-                                 int queue_idx) {
-    T max_result = 0;
-    for (SIZE i = 0; i < n; ++i) {
-      max_result = std::max((T)fabs(*v(i)), max_result);
+  MGARDX_CONT static void
+  Sum(SIZE n, SubArray<1, T, OPENMP> v, SubArray<1, T, OPENMP> result,
+      Array<1, Byte, OPENMP> &workspace, int queue_idx) {
+    if (workspace.hasDeviceAllocation()) {
+      *result((IDX)0) = std::accumulate(v((IDX)0), v((IDX)n), 0);
+    } else {
+      workspace = Array<1, Byte, OPENMP>({(SIZE)1});
     }
-    *result((IDX)0) = max_result;
   }
 
   template <typename T>
-  MGARDX_CONT static void SquareSum(SIZE n, SubArray<1, T, OPENMP> &v,
-                                    SubArray<1, T, OPENMP> &result,
-                                    int queue_idx) {
-    T sum_result = 0;
-    for (SIZE i = 0; i < n; ++i) {
-      T tmp = *v(i);
-      sum_result += tmp * tmp;
+  MGARDX_CONT static void
+  AbsMax(SIZE n, SubArray<1, T, OPENMP> v, SubArray<1, T, OPENMP> result,
+         Array<1, Byte, OPENMP> &workspace, int queue_idx) {
+    if (workspace.hasDeviceAllocation()) {
+      T max_result = 0;
+      for (SIZE i = 0; i < n; ++i) {
+        max_result = std::max((T)fabs(*v(i)), max_result);
+      }
+      *result((IDX)0) = max_result;
+    } else {
+      workspace = Array<1, Byte, OPENMP>({(SIZE)1});
     }
-    *result((IDX)0) = sum_result;
   }
 
   template <typename T>
-  MGARDX_CONT static void ScanSumInclusive(SIZE n, SubArray<1, T, OPENMP> &v,
-                                           SubArray<1, T, OPENMP> &result,
+  MGARDX_CONT static void
+  SquareSum(SIZE n, SubArray<1, T, OPENMP> v, SubArray<1, T, OPENMP> result,
+            Array<1, Byte, OPENMP> &workspace, int queue_idx) {
+    if (workspace.hasDeviceAllocation()) {
+      T sum_result = 0;
+      for (SIZE i = 0; i < n; ++i) {
+        T tmp = *v(i);
+        sum_result += tmp * tmp;
+      }
+      *result((IDX)0) = sum_result;
+    } else {
+      workspace = Array<1, Byte, OPENMP>({(SIZE)1});
+    }
+  }
+
+  template <typename T>
+  MGARDX_CONT static void ScanSumInclusive(SIZE n, SubArray<1, T, OPENMP> v,
+                                           SubArray<1, T, OPENMP> result,
+                                           Array<1, Byte, OPENMP> &workspace,
                                            int queue_idx) {
     // Need gcc 9 and c++17
 #if (__GNUC__ >= 9)
-    std::inclusive_scan(v((IDX)0), v((IDX)n), result((IDX)0));
+    if (workspace.hasDeviceAllocation()) {
+      std::inclusive_scan(v((IDX)0), v((IDX)n), result((IDX)0));
+    } else {
+      workspace = Array<1, Byte, OPENMP>({(SIZE)1});
+    }
 #else
     log::err("Please recompile with GCC 9+ to use ScanSumInclusive<OPENMP>.");
 #endif
   }
 
   template <typename T>
-  MGARDX_CONT static void ScanSumExclusive(SIZE n, SubArray<1, T, OPENMP> &v,
-                                           SubArray<1, T, OPENMP> &result,
+  MGARDX_CONT static void ScanSumExclusive(SIZE n, SubArray<1, T, OPENMP> v,
+                                           SubArray<1, T, OPENMP> result,
+                                           Array<1, Byte, OPENMP> &workspace,
                                            int queue_idx) {
     // Need gcc 9 and c++17
 #if (__GNUC__ >= 9)
-    std::exclusive_scan(v((IDX)0), v((IDX)n), result((IDX)0));
+    if (workspace.hasDeviceAllocation()) {
+      std::exclusive_scan(v((IDX)0), v((IDX)n), result((IDX)0));
+    } else {
+      workspace = Array<1, Byte, OPENMP>({(SIZE)1});
+    }
 #else
     log::err("Please recompile with GCC 9+ to use ScanSumExclusive<OPENMP>.");
 #endif
   }
 
   template <typename T>
-  MGARDX_CONT static void ScanSumExtended(SIZE n, SubArray<1, T, OPENMP> &v,
-                                          SubArray<1, T, OPENMP> &result,
+  MGARDX_CONT static void ScanSumExtended(SIZE n, SubArray<1, T, OPENMP> v,
+                                          SubArray<1, T, OPENMP> result,
+                                          Array<1, Byte, OPENMP> &workspace,
                                           int queue_idx) {
     // Need gcc 9 and c++17
 #if (__GNUC__ >= 9)
-    std::inclusive_scan(v((IDX)0), v((IDX)n), result((IDX)1));
-    *result((IDX)0) = 0;
+    if (workspace.hasDeviceAllocation()) {
+      std::inclusive_scan(v((IDX)0), v((IDX)n), result((IDX)1));
+      *result((IDX)0) = 0;
+    } else {
+      workspace = Array<1, Byte, OPENMP>({(SIZE)1});
+    }
 #else
     log::err("Please recompile with GCC 9+ to use ScanSumExtended<OPENMP>.");
 #endif
   }
 
   template <typename KeyT, typename ValueT>
-  MGARDX_CONT static void SortByKey(SIZE n, SubArray<1, KeyT, OPENMP> &keys,
-                                    SubArray<1, ValueT, OPENMP> &values,
+  MGARDX_CONT static void SortByKey(SIZE n, SubArray<1, KeyT, OPENMP> in_keys,
+                                    SubArray<1, ValueT, OPENMP> in_values,
+                                    SubArray<1, KeyT, OPENMP> out_keys,
+                                    SubArray<1, ValueT, OPENMP> out_values,
+                                    Array<1, Byte, OPENMP> &workspace,
                                     int queue_idx) {
-    std::vector<std::pair<KeyT, ValueT>> data(n);
-    for (SIZE i = 0; i < n; ++i) {
-      data[i] = std::pair<KeyT, ValueT>(*keys(i), *values(i));
-    }
-    std::stable_sort(data.begin(), data.end(),
-                     KeyValueComparator<KeyT, ValueT>{});
-    for (SIZE i = 0; i < n; ++i) {
-      *keys(i) = data[i].first;
-      *values(i) = data[i].second;
+    if (workspace.hasDeviceAllocation()) {
+      std::vector<std::pair<KeyT, ValueT>> data(n);
+      for (SIZE i = 0; i < n; ++i) {
+        data[i] = std::pair<KeyT, ValueT>(*in_keys(i), *in_values(i));
+      }
+      std::stable_sort(data.begin(), data.end(),
+                       KeyValueComparator<KeyT, ValueT>{});
+      for (SIZE i = 0; i < n; ++i) {
+        *out_keys(i) = data[i].first;
+        *out_values(i) = data[i].second;
+      }
+    } else {
+      workspace = Array<1, Byte, OPENMP>({(SIZE)1});
     }
   }
 };

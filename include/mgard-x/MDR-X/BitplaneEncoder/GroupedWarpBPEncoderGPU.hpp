@@ -418,28 +418,33 @@ private:
 };
 
 template <typename T, typename T_bitplane, typename T_error,
-          SIZE NumGroupsPerWarpPerIter, SIZE NumWarpsPerTB, OPTION BinaryType,
-          OPTION EncodingAlgorithm, OPTION ErrorColectingAlgorithm,
-          typename DeviceType>
-class GroupedWarpEncoder : public AutoTuner<DeviceType> {
+          SIZE NumEncodingBitplanes, SIZE NumGroupsPerWarpPerIter,
+          SIZE NumWarpsPerTB, OPTION BinaryType, OPTION EncodingAlgorithm,
+          OPTION ErrorColectingAlgorithm, typename DeviceType>
+class GroupedWarpEncoderKernel : public Kernel {
 public:
+  constexpr static bool EnableAutoTuning() { return false; }
+  // Block reduce conflicts with configuring max shared memory
+  constexpr static bool EnableConfig() { return false; }
+  constexpr static std::string_view Name = "grouped warp bp encoder";
   MGARDX_CONT
-  GroupedWarpEncoder() : AutoTuner<DeviceType>() {}
+  GroupedWarpEncoderKernel(
+      LENGTH n, SIZE exp, SubArray<1, T, DeviceType> v,
+      SubArray<2, T_bitplane, DeviceType> encoded_bitplanes,
+      SubArray<2, T_error, DeviceType> level_errors_workspace)
+      : n(n), exp(exp), encoded_bitplanes(encoded_bitplanes), v(v),
+        level_errors_workspace(level_errors_workspace) {}
 
   using T_sfp = typename std::conditional<std::is_same<T, double>::value,
                                           int64_t, int32_t>::type;
   using T_fp = typename std::conditional<std::is_same<T, double>::value,
                                          uint64_t, uint32_t>::type;
 
-  template <typename T_fp, typename T_sfp, SIZE NumEncodingBitplanes>
   MGARDX_CONT Task<GroupedWarpEncoderFunctor<
       T, T_fp, T_sfp, T_bitplane, T_error, NumEncodingBitplanes,
       NumGroupsPerWarpPerIter, NumWarpsPerTB, BinaryType, EncodingAlgorithm,
       ErrorColectingAlgorithm, DeviceType>>
-  GenTask(LENGTH n, SIZE exp, SubArray<1, T, DeviceType> v,
-          SubArray<2, T_bitplane, DeviceType> encoded_bitplanes,
-          SubArray<2, T_error, DeviceType> level_errors_workspace,
-          int queue_idx) {
+  GenTask(int queue_idx) {
     using FunctorType =
         GroupedWarpEncoderFunctor<T, T_fp, T_sfp, T_bitplane, T_error,
                                   NumEncodingBitplanes, NumGroupsPerWarpPerIter,
@@ -454,132 +459,16 @@ public:
     gridz = 1;
     gridy = 1;
     gridx = MGARDX_NUM_SMs;
-    // printf("GroupedWarpEncoder config(%u %u %u) (%u %u %u), sm_size: %llu\n",
-    // tbx, tby, tbz, gridx, gridy, gridz, sm_size);
     return Task(functor, gridz, gridy, gridx, tbz, tby, tbx, sm_size, queue_idx,
-                "GroupedWarpEncoder");
+                std::string(Name));
   }
 
-  MGARDX_CONT
-  void Execute(LENGTH n, SIZE num_bitplanes, SIZE exp,
-               SubArray<1, T, DeviceType> v,
-               SubArray<2, T_bitplane, DeviceType> encoded_bitplanes,
-               SubArray<1, T_error, DeviceType> level_errors,
-               SubArray<2, T_error, DeviceType> level_errors_workspace,
-               int queue_idx) {
-
-// PrintSubarray("v", v);
-#define ENCODE(NumEncodingBitplanes)                                           \
-  if (num_bitplanes == NumEncodingBitplanes) {                                 \
-    using FunctorType = GroupedWarpEncoderFunctor<                             \
-        T, T_fp, T_sfp, T_bitplane, T_error, NumEncodingBitplanes,             \
-        NumGroupsPerWarpPerIter, NumWarpsPerTB, BinaryType, EncodingAlgorithm, \
-        ErrorColectingAlgorithm, DeviceType>;                                  \
-    using TaskType = Task<FunctorType>;                                        \
-    TaskType task = GenTask<T_fp, T_sfp, NumEncodingBitplanes>(                \
-        n, exp, v, encoded_bitplanes, level_errors_workspace, queue_idx);      \
-    DeviceAdapter<TaskType, DeviceType> adapter;                               \
-    adapter.Execute(task);                                                     \
-  }
-
-    ENCODE(1)
-    ENCODE(2)
-    ENCODE(3)
-    ENCODE(4)
-    ENCODE(5)
-    ENCODE(6)
-    ENCODE(7)
-    ENCODE(8)
-    ENCODE(9)
-    ENCODE(10)
-    ENCODE(11)
-    ENCODE(12)
-    ENCODE(13)
-    ENCODE(14)
-    ENCODE(15)
-    ENCODE(16)
-    ENCODE(17)
-    ENCODE(18)
-    ENCODE(19)
-    ENCODE(20)
-    ENCODE(21)
-    ENCODE(22)
-    ENCODE(23)
-    ENCODE(24)
-    ENCODE(25)
-    ENCODE(26)
-    ENCODE(27)
-    ENCODE(28)
-    ENCODE(29)
-    ENCODE(30)
-    ENCODE(31)
-    ENCODE(32)
-    ENCODE(33)
-    ENCODE(34)
-    ENCODE(35)
-    ENCODE(36)
-    ENCODE(37)
-    ENCODE(38)
-    ENCODE(39)
-    ENCODE(40)
-    ENCODE(41)
-    ENCODE(42)
-    ENCODE(43)
-    ENCODE(44)
-    ENCODE(45)
-    ENCODE(46)
-    ENCODE(47)
-    ENCODE(48)
-    ENCODE(49)
-    ENCODE(50)
-    ENCODE(51)
-    ENCODE(52)
-    ENCODE(53)
-    ENCODE(54)
-    ENCODE(55)
-    ENCODE(56)
-    ENCODE(57)
-    ENCODE(58)
-    ENCODE(59)
-    ENCODE(60)
-    ENCODE(61)
-    ENCODE(62)
-    ENCODE(63)
-    ENCODE(64)
-
-#undef ENCODE
-
-    DeviceRuntime<DeviceType>().SyncQueue(queue_idx);
-    // PrintSubarray("level_errors_workspace", level_errors_workspace);
-    // get level error
-    SIZE reduce_size = MGARDX_NUM_SMs;
-    DeviceCollective<DeviceType> deviceReduce;
-    for (int i = 0; i < num_bitplanes + 1; i++) {
-      SubArray<1, T_error, DeviceType> curr_errors(
-          {reduce_size}, level_errors_workspace(i, 0));
-      SubArray<1, T_error, DeviceType> sum_error({1}, level_errors(i));
-      deviceReduce.Sum(reduce_size, curr_errors, sum_error, queue_idx);
-    }
-    DeviceRuntime<DeviceType>().SyncQueue(queue_idx);
-
-    // PrintSubarray("v", v);
-
-    // PrintSubarray("level_errors", level_errors);
-    // PrintSubarray("encoded_bitplanes", encoded_bitplanes);
-  }
-
-  MGARDX_CONT
-  SIZE MaxBitplaneLength(LENGTH n) {
-    SIZE NumElemPerGroup = sizeof(T_bitplane) * 8;
-    SIZE NumElemPerTBPerIter =
-        NumElemPerGroup * NumGroupsPerWarpPerIter * NumWarpsPerTB;
-    SIZE MaxLengthPerTBPerIter = NumGroupsPerWarpPerIter * NumWarpsPerTB;
-    if (BinaryType == BINARY) {
-      MaxLengthPerTBPerIter *= 2;
-    }
-    LENGTH NumIters = (n - 1) / (MGARDX_NUM_SMs * NumElemPerTBPerIter) + 1;
-    return MaxLengthPerTBPerIter * MGARDX_NUM_SMs * NumIters;
-  }
+private:
+  LENGTH n;
+  SIZE exp;
+  SubArray<1, T, DeviceType> v;
+  SubArray<2, T_bitplane, DeviceType> encoded_bitplanes;
+  SubArray<2, T_error, DeviceType> level_errors_workspace;
 };
 
 template <typename T, typename T_fp, typename T_sfp, typename T_bitplane,
@@ -854,27 +743,30 @@ private:
   T_fp *sm_signs;
 };
 
-template <typename T, typename T_bitplane, SIZE NumGroupsPerWarpPerIter,
-          SIZE NumWarpsPerTB, OPTION BinaryType, OPTION DecodingAlgorithm,
-          typename DeviceType>
-class GroupedWarpDecoder : public AutoTuner<DeviceType> {
+template <typename T, typename T_bitplane, SIZE NumDecodingBitplanes,
+          SIZE NumGroupsPerWarpPerIter, SIZE NumWarpsPerTB, OPTION BinaryType,
+          OPTION DecodingAlgorithm, typename DeviceType>
+class GroupedWarpDecoderKernel : public Kernel {
 public:
+  constexpr static bool EnableAutoTuning() { return false; }
+  constexpr static std::string_view Name = "grouped warp bp decoder";
   MGARDX_CONT
-  GroupedWarpDecoder() : AutoTuner<DeviceType>() {}
+  GroupedWarpDecoderKernel(
+      LENGTH n, SIZE starting_bitplane, SIZE exp,
+      SubArray<2, T_bitplane, DeviceType> encoded_bitplanes,
+      SubArray<1, bool, DeviceType> signs, SubArray<1, T, DeviceType> v)
+      : n(n), starting_bitplane(starting_bitplane), exp(exp),
+        encoded_bitplanes(encoded_bitplanes), signs(signs), v(v) {}
 
   using T_sfp = typename std::conditional<std::is_same<T, double>::value,
                                           int64_t, int32_t>::type;
   using T_fp = typename std::conditional<std::is_same<T, double>::value,
                                          uint64_t, uint32_t>::type;
 
-  template <typename T_fp, typename T_sfp, SIZE NumDecodingBitplanes>
   MGARDX_CONT Task<GroupedWarpDecoderFunctor<
       T, T_fp, T_sfp, T_bitplane, NumDecodingBitplanes, NumGroupsPerWarpPerIter,
       NumWarpsPerTB, BinaryType, DecodingAlgorithm, DeviceType>>
-  GenTask(LENGTH n, SIZE starting_bitplane, SIZE exp,
-          SubArray<2, T_bitplane, DeviceType> encoded_bitplanes,
-          SubArray<1, bool, DeviceType> signs, SubArray<1, T, DeviceType> v,
-          int queue_idx) {
+  GenTask(int queue_idx) {
     using FunctorType =
         GroupedWarpDecoderFunctor<T, T_fp, T_sfp, T_bitplane,
                                   NumDecodingBitplanes, NumGroupsPerWarpPerIter,
@@ -889,112 +781,29 @@ public:
     gridz = 1;
     gridy = 1;
     gridx = MGARDX_NUM_SMs;
-    // printf("GroupedWarpDecoder config(%u %u %u) (%u %u %u), sm_size: %llu\n",
-    // tbx, tby, tbz, gridx, gridy, gridz, sm_size);
     return Task(functor, gridz, gridy, gridx, tbz, tby, tbx, sm_size, queue_idx,
-                "GroupedWarpDecoder");
+                std::string(Name));
   }
 
-  MGARDX_CONT
-  void Execute(LENGTH n, SIZE starting_bitplane, SIZE num_bitplanes, SIZE exp,
-               SubArray<2, T_bitplane, DeviceType> encoded_bitplanes,
-               SubArray<1, bool, DeviceType> signs,
-               SubArray<1, T, DeviceType> v, int queue_idx) {
-#define DECODE(NumDecodingBitplanes)                                           \
-  if (num_bitplanes == NumDecodingBitplanes) {                                 \
-    using FunctorType =                                                        \
-        GroupedWarpDecoderFunctor<T, T_fp, T_sfp, T_bitplane,                  \
-                                  NumDecodingBitplanes,                        \
-                                  NumGroupsPerWarpPerIter, NumWarpsPerTB,      \
-                                  BinaryType, DecodingAlgorithm, DeviceType>;  \
-    using TaskType = Task<FunctorType>;                                        \
-    TaskType task = GenTask<T_fp, T_sfp, NumDecodingBitplanes>(                \
-        n, starting_bitplane, exp, encoded_bitplanes, signs, v, queue_idx);    \
-    DeviceAdapter<TaskType, DeviceType> adapter;                               \
-    adapter.Execute(task);                                                     \
-  }
-
-    DECODE(1)
-    DECODE(2)
-    DECODE(3)
-    DECODE(4)
-    DECODE(5)
-    DECODE(6)
-    DECODE(7)
-    DECODE(8)
-    DECODE(9)
-    DECODE(10)
-    DECODE(11)
-    DECODE(12)
-    DECODE(13)
-    DECODE(14)
-    DECODE(15)
-    DECODE(16)
-    DECODE(17)
-    DECODE(18)
-    DECODE(19)
-    DECODE(20)
-    DECODE(21)
-    DECODE(22)
-    DECODE(23)
-    DECODE(24)
-    DECODE(25)
-    DECODE(26)
-    DECODE(27)
-    DECODE(28)
-    DECODE(29)
-    DECODE(30)
-    DECODE(31)
-    DECODE(32)
-    DECODE(33)
-    DECODE(34)
-    DECODE(35)
-    DECODE(36)
-    DECODE(37)
-    DECODE(38)
-    DECODE(39)
-    DECODE(40)
-    DECODE(41)
-    DECODE(42)
-    DECODE(43)
-    DECODE(44)
-    DECODE(45)
-    DECODE(46)
-    DECODE(47)
-    DECODE(48)
-    DECODE(49)
-    DECODE(50)
-    DECODE(51)
-    DECODE(52)
-    DECODE(53)
-    DECODE(54)
-    DECODE(55)
-    DECODE(56)
-    DECODE(57)
-    DECODE(58)
-    DECODE(59)
-    DECODE(60)
-    DECODE(61)
-    DECODE(62)
-    DECODE(63)
-    DECODE(64)
-
-#undef DECODE
-
-    DeviceRuntime<DeviceType>().SyncQueue(queue_idx);
-    // PrintSubarray("v", v);
-  }
+private:
+  LENGTH n;
+  SIZE starting_bitplane;
+  SIZE exp;
+  SubArray<2, T_bitplane, DeviceType> encoded_bitplanes;
+  SubArray<1, bool, DeviceType> signs;
+  SubArray<1, T, DeviceType> v;
 };
 
 // general bitplane encoder that encodes data by block using T_stream type
 // buffer
-template <typename T_data, typename T_bitplane, typename T_error,
+template <DIM D, typename T_data, typename T_bitplane, typename T_error,
           typename DeviceType>
 class GroupedWarpBPEncoder
-    : public concepts::BitplaneEncoderInterface<T_data, T_bitplane, T_error,
+    : public concepts::BitplaneEncoderInterface<D, T_data, T_bitplane, T_error,
                                                 DeviceType> {
 public:
-  GroupedWarpBPEncoder() {
+  GroupedWarpBPEncoder(Hierarchy<D, T_data, DeviceType> hierarchy)
+      : hierarchy(hierarchy) {
     static_assert(std::is_floating_point<T_data>::value,
                   "GeneralBPEncoder: input data must be floating points.");
     static_assert(!std::is_same<T_data, long double>::value,
@@ -1003,96 +812,248 @@ public:
                   "GroupedBPBlockEncoder: streams must be unsigned integers.");
     static_assert(std::is_integral<T_bitplane>::value,
                   "GroupedBPBlockEncoder: streams must be unsigned integers.");
+
+    SIZE max_bitplane = 64;
+    level_errors_work_array =
+        Array<2, T_error, DeviceType>({max_bitplane + 1, MGARDX_NUM_SMs});
+    DeviceCollective<DeviceType>::Sum(
+        MGARDX_NUM_SMs, SubArray<1, T_error, DeviceType>(),
+        SubArray<1, T_error, DeviceType>(), level_error_sum_work_array, 0);
+
+    level_signs =
+        std::vector<Array<1, bool, DeviceType>>(hierarchy.l_target() + 1);
+    for (int level_idx = 0; level_idx < hierarchy.l_target() + 1; level_idx++) {
+      level_signs[level_idx] =
+          Array<1, bool, DeviceType>({hierarchy.level_num_elems(level_idx)});
+    }
   }
 
-  Array<2, T_bitplane, DeviceType>
-  encode(SIZE n, SIZE num_bitplanes, int32_t exp,
-         SubArray<1, T_data, DeviceType> v,
-         SubArray<1, T_error, DeviceType> level_errors,
-         std::vector<SIZE> &streams_sizes, int queue_idx) const {
+  static size_t EstimateMemoryFootprint(std::vector<SIZE> shape) {
+    Hierarchy<D, T_data, DeviceType> hierarchy(shape, Config());
+    SIZE max_bitplane = 64;
+    size_t size = 0;
+    size += hierarchy.estimate_memory_usgae(shape);
+    size += (max_bitplane + 1) * MGARDX_NUM_SMs * sizeof(T_error);
+    for (int level_idx = 0; level_idx < hierarchy.l_target() + 1; level_idx++) {
+      size += hierarchy.level_num_elems(level_idx) * sizeof(bool);
+    }
+    return size;
+  }
 
-    MDR::GroupedWarpEncoder<T_data, T_bitplane, T_error,
-                            NUM_GROUPS_PER_WARP_PER_ITER, NUM_WARP_PER_TB,
-                            BINARY_TYPE, DATA_ENCODING_ALGORITHM,
-                            ERROR_COLLECTING_ALGORITHM, DeviceType>
-        encoder;
+  void encode(SIZE n, SIZE num_bitplanes, int32_t exp,
+              SubArray<1, T_data, DeviceType> v,
+              SubArray<2, T_bitplane, DeviceType> encoded_bitplanes,
+              SubArray<1, T_error, DeviceType> level_errors,
+              std::vector<SIZE> &streams_sizes, int queue_idx) {
 
-    Array<2, T_error, DeviceType> level_errors_work_array(
-        {num_bitplanes + 1, MGARDX_NUM_SMs});
     SubArray<2, T_error, DeviceType> level_errors_work(level_errors_work_array);
 
-    Array<2, T_bitplane, DeviceType> encoded_bitplanes_array(
-        {num_bitplanes, encoder.MaxBitplaneLength(n)});
-    SubArray<2, T_bitplane, DeviceType> encoded_bitplanes_subarray(
-        encoded_bitplanes_array);
-
-    encoder.Execute(n, num_bitplanes, exp, v, encoded_bitplanes_subarray,
-                    level_errors, level_errors_work, queue_idx);
-
-    for (int i = 0; i < num_bitplanes; i++) {
-      streams_sizes[i] = encoder.MaxBitplaneLength(n) * sizeof(T_bitplane);
-    }
-
-    return encoded_bitplanes_array;
+#define ENCODE(NumEncodingBitplanes)                                           \
+  if (num_bitplanes == NumEncodingBitplanes) {                                 \
+    DeviceLauncher<DeviceType>::Execute(                                       \
+        GroupedWarpEncoderKernel<                                              \
+            T_data, T_bitplane, T_error, NumEncodingBitplanes,                 \
+            NUM_GROUPS_PER_WARP_PER_ITER, NUM_WARP_PER_TB, BINARY_TYPE,        \
+            DATA_ENCODING_ALGORITHM, ERROR_COLLECTING_ALGORITHM, DeviceType>(  \
+            n, exp, v, encoded_bitplanes, level_errors_work),                  \
+        queue_idx);                                                            \
   }
 
-  Array<1, T_data, DeviceType>
-  decode(SIZE n, SIZE num_bitplanes, int32_t exp,
-         SubArray<2, T_bitplane, DeviceType> encoded_bitplanes, int level,
-         int queue_idx) {}
+    ENCODE(1)
+    ENCODE(2)
+    ENCODE(3)
+    ENCODE(4)
+    ENCODE(5)
+    ENCODE(6)
+    ENCODE(7)
+    ENCODE(8)
+    ENCODE(9)
+    ENCODE(10)
+    ENCODE(11)
+    ENCODE(12)
+    ENCODE(13)
+    ENCODE(14)
+    ENCODE(15)
+    ENCODE(16)
+    ENCODE(17)
+    ENCODE(18)
+    ENCODE(19)
+    ENCODE(20)
+    ENCODE(21)
+    ENCODE(22)
+    ENCODE(23)
+    ENCODE(24)
+    ENCODE(25)
+    ENCODE(26)
+    ENCODE(27)
+    ENCODE(28)
+    ENCODE(29)
+    ENCODE(30)
+    ENCODE(31)
+    ENCODE(32)
+    ENCODE(33)
+    ENCODE(34)
+    ENCODE(35)
+    ENCODE(36)
+    ENCODE(37)
+    ENCODE(38)
+    ENCODE(39)
+    ENCODE(40)
+    ENCODE(41)
+    ENCODE(42)
+    ENCODE(43)
+    ENCODE(44)
+    ENCODE(45)
+    ENCODE(46)
+    ENCODE(47)
+    ENCODE(48)
+    ENCODE(49)
+    ENCODE(50)
+    ENCODE(51)
+    ENCODE(52)
+    ENCODE(53)
+    ENCODE(54)
+    ENCODE(55)
+    ENCODE(56)
+    ENCODE(57)
+    ENCODE(58)
+    ENCODE(59)
+    ENCODE(60)
+    ENCODE(61)
+    ENCODE(62)
+    ENCODE(63)
+    ENCODE(64)
+
+#undef ENCODE
+    DeviceRuntime<DeviceType>().SyncQueue(queue_idx);
+    // PrintSubarray("level_errors_work", level_errors_work);
+    // get level error
+    SIZE reduce_size = MGARDX_NUM_SMs;
+    for (int i = 0; i < num_bitplanes + 1; i++) {
+      SubArray<1, T_error, DeviceType> curr_errors({reduce_size},
+                                                   level_errors_work(i, 0));
+      SubArray<1, T_error, DeviceType> sum_error({1}, level_errors(i));
+      DeviceCollective<DeviceType>::Sum(reduce_size, curr_errors, sum_error,
+                                        level_error_sum_work_array, queue_idx);
+    }
+
+    for (int i = 0; i < num_bitplanes; i++) {
+      streams_sizes[i] = buffer_size(n) * sizeof(T_bitplane);
+    }
+  }
+
+  void decode(SIZE n, SIZE num_bitplanes, int32_t exp,
+              SubArray<2, T_bitplane, DeviceType> encoded_bitplanes, int level,
+              SubArray<1, T_data, DeviceType> v, int queue_idx) {}
 
   // decode the data and record necessary information for progressiveness
-  Array<1, T_data, DeviceType>
-  progressive_decode(SIZE n, SIZE starting_bitplane, SIZE num_bitplanes,
-                     int32_t exp,
-                     SubArray<2, T_bitplane, DeviceType> encoded_bitplanes,
-                     int level, int queue_idx) {
-
-    // SIZE num_batches_per_TB = 2;
-    // const SIZE num_elems_per_TB = sizeof(T_bitplane) * 8 *
-    // num_batches_per_TB; const SIZE bitplane_max_length_per_TB =
-    // num_batches_per_TB * 2; SIZE num_blocks =
-    // (n-1)/num_elems_per_TB+1; SIZE bitplane_max_length_total =
-    // bitplane_max_length_per_TB * num_blocks;
-
-    // const SIZE NumGroupsPerWarpPerIter = 2;
-    // const SIZE NumWarpsPerTB = 16;
-    MDR::GroupedWarpDecoder<T_data, T_bitplane, NUM_GROUPS_PER_WARP_PER_ITER,
-                            NUM_WARP_PER_TB, BINARY_TYPE,
-                            DATA_DECODING_ALGORITHM, DeviceType>
-        decoder;
-
-    if (level_signs.size() == level) {
-      level_signs.push_back(Array<1, bool, DeviceType>({(SIZE)n}));
-    }
+  void progressive_decode(SIZE n, SIZE starting_bitplane, SIZE num_bitplanes,
+                          int32_t exp,
+                          SubArray<2, T_bitplane, DeviceType> encoded_bitplanes,
+                          int level, SubArray<1, T_data, DeviceType> v,
+                          int queue_idx) {
 
     SubArray<1, bool, DeviceType> signs_subarray(level_signs[level]);
 
-    Array<1, T_data, DeviceType> v_array({(SIZE)n});
-    SubArray<1, T_data, DeviceType> v(v_array);
-
     if (num_bitplanes > 0) {
-      // if (num_bitplanes == 1) {
-      //   PrintSubarray("signs_subarray", signs_subarray);
-      // }
-      decoder.Execute(n, starting_bitplane, num_bitplanes, exp,
-                      encoded_bitplanes, signs_subarray, v, queue_idx);
-    }
-    return v_array;
+#define DECODE(NumDecodingBitplanes)                                           \
+  if (num_bitplanes == NumDecodingBitplanes) {                                 \
+    DeviceLauncher<DeviceType>::Execute(                                       \
+        GroupedWarpDecoderKernel<T_data, T_bitplane, NumDecodingBitplanes,     \
+                                 NUM_GROUPS_PER_WARP_PER_ITER,                 \
+                                 NUM_WARP_PER_TB, BINARY_TYPE,                 \
+                                 DATA_DECODING_ALGORITHM, DeviceType>(         \
+            n, starting_bitplane, exp, encoded_bitplanes, signs_subarray, v),  \
+        queue_idx);                                                            \
   }
 
-  SIZE buffer_size(SIZE n) const {
-    MDR::GroupedWarpEncoder<T_data, T_bitplane, T_error,
-                            NUM_GROUPS_PER_WARP_PER_ITER, NUM_WARP_PER_TB,
-                            BINARY_TYPE, DATA_ENCODING_ALGORITHM,
-                            ERROR_COLLECTING_ALGORITHM, DeviceType>
-        encoder;
-    return encoder.MaxBitplaneLength(n);
+      DECODE(1)
+      DECODE(2)
+      DECODE(3)
+      DECODE(4)
+      DECODE(5)
+      DECODE(6)
+      DECODE(7)
+      DECODE(8)
+      DECODE(9)
+      DECODE(10)
+      DECODE(11)
+      DECODE(12)
+      DECODE(13)
+      DECODE(14)
+      DECODE(15)
+      DECODE(16)
+      DECODE(17)
+      DECODE(18)
+      DECODE(19)
+      DECODE(20)
+      DECODE(21)
+      DECODE(22)
+      DECODE(23)
+      DECODE(24)
+      DECODE(25)
+      DECODE(26)
+      DECODE(27)
+      DECODE(28)
+      DECODE(29)
+      DECODE(30)
+      DECODE(31)
+      DECODE(32)
+      DECODE(33)
+      DECODE(34)
+      DECODE(35)
+      DECODE(36)
+      DECODE(37)
+      DECODE(38)
+      DECODE(39)
+      DECODE(40)
+      DECODE(41)
+      DECODE(42)
+      DECODE(43)
+      DECODE(44)
+      DECODE(45)
+      DECODE(46)
+      DECODE(47)
+      DECODE(48)
+      DECODE(49)
+      DECODE(50)
+      DECODE(51)
+      DECODE(52)
+      DECODE(53)
+      DECODE(54)
+      DECODE(55)
+      DECODE(56)
+      DECODE(57)
+      DECODE(58)
+      DECODE(59)
+      DECODE(60)
+      DECODE(61)
+      DECODE(62)
+      DECODE(63)
+      DECODE(64)
+
+#undef DECODE
+    }
+  }
+
+  static SIZE buffer_size(SIZE n) {
+    SIZE NumElemPerGroup = sizeof(T_bitplane) * 8;
+    SIZE NumElemPerTBPerIter =
+        NumElemPerGroup * NUM_GROUPS_PER_WARP_PER_ITER * NUM_WARP_PER_TB;
+    SIZE MaxLengthPerTBPerIter = NUM_GROUPS_PER_WARP_PER_ITER * NUM_WARP_PER_TB;
+    if (BINARY_TYPE == BINARY) {
+      MaxLengthPerTBPerIter *= 2;
+    }
+    LENGTH NumIters = (n - 1) / (MGARDX_NUM_SMs * NumElemPerTBPerIter) + 1;
+    return MaxLengthPerTBPerIter * MGARDX_NUM_SMs * NumIters;
   }
 
   void print() const { std::cout << "Grouped bitplane encoder" << std::endl; }
 
 private:
+  Hierarchy<D, T_data, DeviceType> hierarchy;
+  Array<2, T_error, DeviceType> level_errors_work_array;
+  Array<1, Byte, DeviceType> level_error_sum_work_array;
   std::vector<Array<1, bool, DeviceType>> level_signs;
   std::vector<std::vector<uint8_t>> level_recording_bitplanes;
 };

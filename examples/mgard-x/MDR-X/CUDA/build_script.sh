@@ -12,11 +12,11 @@ set -e
 # Setup MGARD installation dir
 install_dir=$(pwd)/../../../../install-cuda-turing
 
-rm -rf build
-mkdir build 
+# rm -rf build
+mkdir -p build 
 cmake -S .  -B ./build \
 	    -Dmgard_ROOT=${install_dir}\
-	    -DCMAKE_CUDA_ARCHITECTURES=70\
+	    -DCMAKE_CUDA_ARCHITECTURES="75"\
 	    -DCMAKE_PREFIX_PATH="${install_dir}"
 	  
 cmake --build ./build -j

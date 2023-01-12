@@ -91,29 +91,29 @@ template <typename T, OPTION MemoryType, OPTION Scope>
 struct Atomic<T, MemoryType, Scope, HIP> {
   MGARDX_EXEC static T Min(T *result, T value) {
     if constexpr (Scope == AtomicSystemScope) {
-      return atomicMin_system(result, value);
+      return atomicMin(result, value);
     } else if constexpr (Scope == AtomicDeviceScope) {
       return atomicMin(result, value);
     } else {
-      return atomicMin_block(result, value);
+      return atomicMin(result, value);
     }
   }
   MGARDX_EXEC static T Max(T *result, T value) {
     if constexpr (Scope == AtomicSystemScope) {
-      return atomicMax_system(result, value);
+      return atomicMax(result, value);
     } else if constexpr (Scope == AtomicDeviceScope) {
       return atomicMax(result, value);
     } else {
-      return atomicMax_block(result, value);
+      return atomicMax_(result, value);
     }
   }
   MGARDX_EXEC static T Add(T *result, T value) {
     if constexpr (Scope == AtomicSystemScope) {
-      return atomicAdd_system(result, value);
+      return atomicAdd(result, value);
     } else if constexpr (Scope == AtomicDeviceScope) {
       return atomicAdd(result, value);
     } else {
-      return atomicAdd_block(result, value);
+      return atomicAdd(result, value);
     }
   }
 };
@@ -145,9 +145,7 @@ template <> struct Math<HIP> {
   }
 };
 
-template <typename Task> MGARDX_KERL void kernel() {}
-
-template <typename Task> MGARDX_KERL void Kernel(Task task) {
+template <typename Task> MGARDX_KERL void HipKernel(Task task) {
   Byte *shared_memory = SharedMemory<Byte>();
   task.GetFunctor().Init(gridDim.z, gridDim.y, gridDim.x, blockDim.z,
                          blockDim.y, blockDim.x, blockIdx.z, blockIdx.y,
@@ -175,7 +173,7 @@ template <typename Task> MGARDX_KERL void Kernel(Task task) {
   task.GetFunctor().Operation10();
 }
 
-template <typename Task> MGARDX_KERL void IterKernel(Task task) {
+template <typename Task> MGARDX_KERL void HipIterKernel(Task task) {
   Byte *shared_memory = SharedMemory<Byte>();
 
   task.GetFunctor().Init(gridDim.z, gridDim.y, gridDim.x, blockDim.z,
@@ -228,7 +226,8 @@ template <typename Task> MGARDX_KERL void IterKernel(Task task) {
   SyncBlock<HIP>::Sync();
 }
 
-template <typename Task> MGARDX_KERL void HuffmanCLCustomizedKernel(Task task) {
+template <typename Task>
+MGARDX_KERL void HipHuffmanCLCustomizedKernel(Task task) {
   Byte *shared_memory = SharedMemory<Byte>();
 
   task.GetFunctor().Init(gridDim.z, gridDim.y, gridDim.x, blockDim.z,
@@ -300,7 +299,7 @@ SINGLE_KERNEL(Operation14);
 
 #undef SINGLE_KERNEL
 
-template <typename Task> MGARDX_KERL void ParallelMergeKernel(Task task) {
+template <typename Task> MGARDX_KERL void HipParallelMergeKernel(Task task) {
   Byte *shared_memory = SharedMemory<Byte>();
 
   task.GetFunctor().Init(gridDim.z, gridDim.y, gridDim.x, blockDim.z,
@@ -321,7 +320,8 @@ template <typename Task> MGARDX_KERL void ParallelMergeKernel(Task task) {
   task.GetFunctor().Operation9();
 }
 
-template <typename Task> MGARDX_KERL void HuffmanCWCustomizedKernel(Task task) {
+template <typename Task>
+MGARDX_KERL void HipHuffmanCWCustomizedKernel(Task task) {
   Byte *shared_memory = SharedMemory<Byte>();
 
   task.GetFunctor().Init(gridDim.z, gridDim.y, gridDim.x, blockDim.z,
@@ -382,7 +382,7 @@ public:
                             hipDeviceAttributeMaxThreadsPerMultiProcessor, d);
       hipDeviceGetAttribute(&MaxNumThreadsPerTB[d],
                             hipDeviceAttributeMaxThreadsPerBlock, d);
-      SupportCooperativeGroups[d] = false;
+      SupportCooperativeGroups[d] = true;
       hipDeviceProp_t prop;
       hipGetDeviceProperties(&prop, d);
       // Setting WarpSize[d] to true value (64) can trigger a bug
@@ -494,11 +494,11 @@ public:
       delete[] streams[d];
     }
     delete[] streams;
-    streams = NULL;
+    streams = nullptr;
   }
 
   int NumDevices;
-  hipStream_t **streams = NULL;
+  hipStream_t **streams = nullptr;
 };
 
 extern int hip_dev_id;
@@ -577,25 +577,28 @@ public:
 
     if constexpr (std::is_base_of<Functor<HIP>, FunctorType>::value) {
       gpuErrchk(hipOccupancyMaxActiveBlocksPerMultiprocessor(
-          &numBlocks, Kernel<Task<FunctorType>>, blockSize, dynamicSMemSize));
+          &numBlocks, HipKernel<Task<FunctorType>>, blockSize,
+          dynamicSMemSize));
     } else if constexpr (std::is_base_of<IterFunctor<HIP>,
                                          FunctorType>::value) {
       gpuErrchk(hipOccupancyMaxActiveBlocksPerMultiprocessor(
-          &numBlocks, IterKernel<Task<FunctorType>>, blockSize,
+          &numBlocks, HipIterKernel<Task<FunctorType>>, blockSize,
           dynamicSMemSize));
     } else if constexpr (std::is_base_of<HuffmanCLCustomizedFunctor<HIP>,
                                          FunctorType>::value) {
       gpuErrchk(hipOccupancyMaxActiveBlocksPerMultiprocessor(
-          &numBlocks, HuffmanCLCustomizedKernel<Task<FunctorType>>, blockSize,
-          dynamicSMemSize));
+          &numBlocks, HipHuffmanCLCustomizedKernel<Task<FunctorType>>,
+          blockSize, dynamicSMemSize));
     } else if constexpr (std::is_base_of<HuffmanCWCustomizedFunctor<HIP>,
                                          FunctorType>::value) {
       gpuErrchk(hipOccupancyMaxActiveBlocksPerMultiprocessor(
-          &numBlocks, HuffmanCWCustomizedKernel<Task<FunctorType>>, blockSize,
-          dynamicSMemSize));
+          &numBlocks, HipHuffmanCWCustomizedKernel<Task<FunctorType>>,
+          blockSize, dynamicSMemSize));
     } else {
       log::err("GetOccupancyMaxActiveBlocksPerSM Error!");
     }
+    // HIP tends to over estimate this value
+    numBlocks /= 2;
     return numBlocks;
   }
 
@@ -604,23 +607,23 @@ public:
                                                         int maxbytes) {
 
     if constexpr (std::is_base_of<Functor<HIP>, FunctorType>::value) {
-      gpuErrchk(hipFuncSetAttribute((const void *)Kernel<Task<FunctorType>>,
+      gpuErrchk(hipFuncSetAttribute((const void *)HipKernel<Task<FunctorType>>,
                                     hipFuncAttributeMaxDynamicSharedMemorySize,
                                     maxbytes));
     } else if constexpr (std::is_base_of<IterFunctor<HIP>,
                                          FunctorType>::value) {
-      gpuErrchk(hipFuncSetAttribute((const void *)IterKernel<Task<FunctorType>>,
-                                    hipFuncAttributeMaxDynamicSharedMemorySize,
-                                    maxbytes));
+      gpuErrchk(hipFuncSetAttribute(
+          (const void *)HipIterKernel<Task<FunctorType>>,
+          hipFuncAttributeMaxDynamicSharedMemorySize, maxbytes));
     } else if constexpr (std::is_base_of<HuffmanCLCustomizedFunctor<HIP>,
                                          FunctorType>::value) {
       gpuErrchk(hipFuncSetAttribute(
-          (const void *)HuffmanCLCustomizedKernel<Task<FunctorType>>,
+          (const void *)HipHuffmanCLCustomizedKernel<Task<FunctorType>>,
           hipFuncAttributeMaxDynamicSharedMemorySize, maxbytes));
     } else if constexpr (std::is_base_of<HuffmanCWCustomizedFunctor<HIP>,
                                          FunctorType>::value) {
       gpuErrchk(hipFuncSetAttribute(
-          (const void *)HuffmanCWCustomizedKernel<Task<FunctorType>>,
+          (const void *)HipHuffmanCWCustomizedKernel<Task<FunctorType>>,
           hipFuncAttributeMaxDynamicSharedMemorySize, maxbytes));
     } else {
       log::err("SetPreferredSharedMemoryCarveout Error!");
@@ -646,6 +649,8 @@ public:
   MGARDX_CONT static void Malloc1D(T *&ptr, SIZE n,
                                    int queue_idx = MGARDX_SYNCHRONIZED_QUEUE) {
     log::dbg("Calling MemoryManager<HIP>::Malloc1D");
+    if (n == 0)
+      return;
     if (queue_idx == MGARDX_SYNCHRONIZED_QUEUE) {
       DeviceRuntime<HIP>::SyncQueue(queue_idx);
     }
@@ -664,6 +669,8 @@ public:
   MGARDX_CONT static void MallocND(T *&ptr, SIZE n1, SIZE n2, SIZE &ld,
                                    int queue_idx = MGARDX_SYNCHRONIZED_QUEUE) {
     log::dbg("Calling MemoryManager<HIP>::MallocND");
+    if (n1 == 0 || n2 == 0)
+      return;
     if (queue_idx == MGARDX_SYNCHRONIZED_QUEUE) {
       DeviceRuntime<HIP>::SyncQueue(queue_idx);
     }
@@ -690,6 +697,8 @@ public:
   MGARDX_CONT static void
   MallocManaged1D(T *&ptr, SIZE n, int queue_idx = MGARDX_SYNCHRONIZED_QUEUE) {
     log::dbg("Calling MemoryManager<HIP>::MallocManaged1D");
+    if (n == 0)
+      return;
     if (queue_idx == MGARDX_SYNCHRONIZED_QUEUE) {
       DeviceRuntime<HIP>::SyncQueue(queue_idx);
     }
@@ -709,7 +718,7 @@ public:
     if (queue_idx == MGARDX_SYNCHRONIZED_QUEUE) {
       DeviceRuntime<HIP>::SyncQueue(queue_idx);
     }
-    if (ptr == NULL)
+    if (ptr == nullptr)
       return;
     gpuErrchk(hipFree(ptr));
     if (queue_idx == MGARDX_SYNCHRONIZED_QUEUE) {
@@ -751,10 +760,16 @@ public:
     using converted_T =
         typename std::conditional<std::is_same<T, void>::value, Byte, T>::type;
     hipStream_t stream = DeviceRuntime<HIP>::GetQueue(queue_idx);
-    gpuErrchk(hipMemcpy2DAsync(dst_ptr, dst_ld * sizeof(converted_T), src_ptr,
-                               src_ld * sizeof(converted_T),
-                               n1 * sizeof(converted_T), n2, hipMemcpyDefault,
-                               stream));
+    // HIP seesm to have bug when n2 = 1
+    if (n2 != 1) {
+      gpuErrchk(hipMemcpy2DAsync(dst_ptr, dst_ld * sizeof(converted_T), src_ptr,
+                                 src_ld * sizeof(converted_T),
+                                 n1 * sizeof(converted_T), n2, hipMemcpyDefault,
+                                 stream));
+    } else {
+      gpuErrchk(hipMemcpyAsync(dst_ptr, src_ptr, n1 * sizeof(converted_T),
+                               hipMemcpyDefault, stream));
+    }
     if (queue_idx == MGARDX_SYNCHRONIZED_QUEUE) {
       DeviceRuntime<HIP>::SyncQueue(queue_idx);
     }
@@ -788,7 +803,7 @@ public:
     if (queue_idx == MGARDX_SYNCHRONIZED_QUEUE) {
       DeviceRuntime<HIP>::SyncQueue(queue_idx);
     }
-    if (ptr == NULL)
+    if (ptr == nullptr)
       return;
     gpuErrchk(hipFreeHost(ptr));
     if (queue_idx == MGARDX_SYNCHRONIZED_QUEUE) {
@@ -854,26 +869,28 @@ public:
 
   template <typename T> MGARDX_CONT static bool CheckHostRegister(T *ptr) {
     log::dbg("Calling MemoryManager<HIP>::CheckHostRegister");
-    unsigned int flags;
-    hipHostGetFlags(&flags, (void *)ptr);
-    return hipGetLastError() == hipSuccess;
+    // Disabled since it is not working correctly
+    // unsigned int flags;
+    // hipHostGetFlags(&flags, (void *)ptr);
+    // return hipGetLastError() == hipSuccess;
+    return true;
   }
 
   template <typename T> MGARDX_CONT static void HostRegister(T *ptr, SIZE n) {
     log::dbg("Calling MemoryManager<HIP>::HostRegister");
     using converted_T =
         typename std::conditional<std::is_same<T, void>::value, Byte, T>::type;
-    if (!CheckHostRegister(ptr)) {
-      gpuErrchk(hipHostRegister((void *)ptr, n * sizeof(converted_T),
-                                hipHostRegisterPortable));
-    }
+    // if (!CheckHostRegister(ptr)) {
+    gpuErrchk(hipHostRegister((void *)ptr, n * sizeof(converted_T),
+                              hipHostRegisterPortable));
+    //}
   }
 
   template <typename T> MGARDX_CONT static void HostUnregister(T *ptr) {
     log::dbg("Calling MemoryManager<HIP>::HostUnregister");
-    if (CheckHostRegister(ptr)) {
-      gpuErrchk(hipHostUnregister((void *)ptr));
-    }
+    // if (CheckHostRegister(ptr)) {
+    gpuErrchk(hipHostUnregister((void *)ptr));
+    //}
   }
 
   static bool ReduceMemoryFootprint;
@@ -1026,7 +1043,8 @@ struct BlockBitTranspose<T_org, T_trans, nblockx, nblocky, nblockz, ALIGN,
           } else {
           }
           T_trans *sum = &(tv[B_idx]);
-          // atomicAdd_block(sum, shifted_bit);
+          Atomic<T_trans, AtomicSharedMemory, AtomicBlockScope, HIP>::Add(
+              sum, shifted_bit);
         }
       }
     }
@@ -1313,7 +1331,8 @@ struct BlockErrorCollect<T, T_fp, T_sfp, T_error, nblockx, nblocky, nblockz,
           error = temp[(num_bitplanes - bitplane_idx) * num_elems + elem_idx];
         }
         T_error *sum = &(errors[num_bitplanes - bitplane_idx]);
-        atomicAdd(sum, error);
+        Atomic<T_error, AtomicSharedMemory, AtomicBlockScope, HIP>::Add(sum,
+                                                                        error);
       }
     }
   }
@@ -1485,7 +1504,8 @@ struct WarpBitTranspose<T_org, T_trans, ALIGN, METHOD, b, B, HIP> {
         } else {
         }
         T_trans *sum = &(tv[B_idx * inc_tv]);
-        atomicAdd(sum, shifted_bit);
+        Atomic<T_trans, AtomicSharedMemory, AtomicBlockScope, HIP>::Add(
+            sum, shifted_bit);
       }
     }
     // if (IdX == 0 && IdY == 0) { start = clock64() - start;
@@ -1698,10 +1718,12 @@ struct WarpErrorCollect<T, T_fp, T_sfp, T_error, METHOD, BinaryType, num_elems,
               (T_error)Math<HIP>::negabinary2binary(ngb_data & mask) + mantissa;
         }
         T_error *sum = &(errors[num_bitplanes - bitplane_idx]);
-        atomicAdd(sum, diff * diff);
+        Atomic<T_error, AtomicSharedMemory, AtomicBlockScope, HIP>::Add(
+            sum, diff * diff);
       }
       T_error *sum = &(errors[0]);
-      atomicAdd(sum, data * data);
+      Atomic<T_error, AtomicSharedMemory, AtomicBlockScope, HIP>::Add(
+          sum, data * data);
     }
   }
 
@@ -1767,8 +1789,8 @@ struct WarpErrorCollect<T, T_fp, T_sfp, T_error, METHOD, BinaryType, num_elems,
   }
 };
 
-template <typename Task> void HuffmanCLCustomizedNoCGKernel(Task task) {
-  // std::cout << "calling HuffmanCLCustomizedNoCGKernel\n";
+template <typename Task> void HipHuffmanCLCustomizedNoCGKernel(Task task) {
+  // std::cout << "calling HipHuffmanCLCustomizedNoCGKernel\n";
   dim3 threadsPerBlock(task.GetBlockDimX(), task.GetBlockDimY(),
                        task.GetBlockDimZ());
   dim3 blockPerGrid(task.GetGridDimX(), task.GetGridDimY(), task.GetGridDimZ());
@@ -1778,66 +1800,66 @@ template <typename Task> void HuffmanCLCustomizedNoCGKernel(Task task) {
   // std::cout << "calling Single_Operation1_Kernel\n";
   Single_Operation1_Kernel<<<blockPerGrid, threadsPerBlock, sm_size, stream>>>(
       task);
-  ErrorSyncCheck(hipDeviceSynchronize(), task);
+  DeviceRuntime<HIP>::SyncQueue(task.GetQueueIdx());
 
   // std::cout << "calling LoopCondition1\n";
   while (task.GetFunctor().LoopCondition1()) {
-    ErrorSyncCheck(hipDeviceSynchronize(), task);
+    DeviceRuntime<HIP>::SyncQueue(task.GetQueueIdx());
 
     // std::cout << "calling Single_Operation2_Kernel\n";
     Single_Operation2_Kernel<<<blockPerGrid, threadsPerBlock, sm_size,
                                stream>>>(task);
-    ErrorSyncCheck(hipDeviceSynchronize(), task);
+    DeviceRuntime<HIP>::SyncQueue(task.GetQueueIdx());
 
     // std::cout << "calling Single_Operation3_Kernel\n";
     Single_Operation3_Kernel<<<blockPerGrid, threadsPerBlock, sm_size,
                                stream>>>(task);
-    ErrorSyncCheck(hipDeviceSynchronize(), task);
+    DeviceRuntime<HIP>::SyncQueue(task.GetQueueIdx());
 
     // std::cout << "calling Single_Operation4_Kernel\n";
     Single_Operation4_Kernel<<<blockPerGrid, threadsPerBlock, sm_size,
                                stream>>>(task);
-    ErrorSyncCheck(hipDeviceSynchronize(), task);
+    DeviceRuntime<HIP>::SyncQueue(task.GetQueueIdx());
 
     // std::cout << "calling BranchCondition1\n";
     if (task.GetFunctor().BranchCondition1()) {
-      ErrorSyncCheck(hipDeviceSynchronize(), task);
+      DeviceRuntime<HIP>::SyncQueue(task.GetQueueIdx());
 
-      // std::cout << "calling ParallelMergeKernel\n";
-      ParallelMergeKernel<<<blockPerGrid, threadsPerBlock, sm_size, stream>>>(
-          task);
-      ErrorSyncCheck(hipDeviceSynchronize(), task);
+      // std::cout << "calling HipParallelMergeKernel\n";
+      HipParallelMergeKernel<<<blockPerGrid, threadsPerBlock, sm_size,
+                               stream>>>(task);
+      DeviceRuntime<HIP>::SyncQueue(task.GetQueueIdx());
 
       // std::cout << "calling Single_Operation10_Kernel\n";
       Single_Operation10_Kernel<<<blockPerGrid, threadsPerBlock, sm_size,
                                   stream>>>(task);
-      ErrorSyncCheck(hipDeviceSynchronize(), task);
+      DeviceRuntime<HIP>::SyncQueue(task.GetQueueIdx());
     }
 
     // std::cout << "calling Single_Operation11_Kernel\n";
     Single_Operation11_Kernel<<<blockPerGrid, threadsPerBlock, sm_size,
                                 stream>>>(task);
-    ErrorSyncCheck(hipDeviceSynchronize(), task);
+    DeviceRuntime<HIP>::SyncQueue(task.GetQueueIdx());
 
     // std::cout << "calling Single_Operation12_Kernel\n";
     Single_Operation12_Kernel<<<blockPerGrid, threadsPerBlock, sm_size,
                                 stream>>>(task);
-    ErrorSyncCheck(hipDeviceSynchronize(), task);
+    DeviceRuntime<HIP>::SyncQueue(task.GetQueueIdx());
 
     // std::cout << "calling Single_Operation13_Kernel\n";
     Single_Operation13_Kernel<<<blockPerGrid, threadsPerBlock, sm_size,
                                 stream>>>(task);
-    ErrorSyncCheck(hipDeviceSynchronize(), task);
+    DeviceRuntime<HIP>::SyncQueue(task.GetQueueIdx());
 
     // std::cout << "calling Single_Operation14_Kernel\n";
     Single_Operation14_Kernel<<<blockPerGrid, threadsPerBlock, sm_size,
                                 stream>>>(task);
-    ErrorSyncCheck(hipDeviceSynchronize(), task);
+    DeviceRuntime<HIP>::SyncQueue(task.GetQueueIdx());
   }
 }
 
-template <typename Task> void HuffmanCWCustomizedNoCGKernel(Task task) {
-  // std::cout << "calling HuffmanCWCustomizedNoCGKernel\n";
+template <typename Task> void HipHuffmanCWCustomizedNoCGKernel(Task task) {
+  // std::cout << "calling HipHuffmanCWCustomizedNoCGKernel\n";
   dim3 threadsPerBlock(task.GetBlockDimX(), task.GetBlockDimY(),
                        task.GetBlockDimZ());
   dim3 blockPerGrid(task.GetGridDimX(), task.GetGridDimY(), task.GetGridDimZ());
@@ -1847,55 +1869,55 @@ template <typename Task> void HuffmanCWCustomizedNoCGKernel(Task task) {
   // std::cout << "calling Single_Operation1_Kernel\n";
   Single_Operation1_Kernel<<<blockPerGrid, threadsPerBlock, sm_size, stream>>>(
       task);
-  ErrorSyncCheck(hipDeviceSynchronize(), task);
+  DeviceRuntime<HIP>::SyncQueue(task.GetQueueIdx());
   // std::cout << "calling Single_Operation2_Kernel\n";
   Single_Operation2_Kernel<<<blockPerGrid, threadsPerBlock, sm_size, stream>>>(
       task);
-  ErrorSyncCheck(hipDeviceSynchronize(), task);
+  DeviceRuntime<HIP>::SyncQueue(task.GetQueueIdx());
   // std::cout << "calling Single_Operation3_Kernel\n";
   Single_Operation3_Kernel<<<blockPerGrid, threadsPerBlock, sm_size, stream>>>(
       task);
-  ErrorSyncCheck(hipDeviceSynchronize(), task);
+  DeviceRuntime<HIP>::SyncQueue(task.GetQueueIdx());
 
   // std::cout << "calling LoopCondition1\n";
   while (task.GetFunctor().LoopCondition1()) {
-    ErrorSyncCheck(hipDeviceSynchronize(), task);
+    DeviceRuntime<HIP>::SyncQueue(task.GetQueueIdx());
 
     // std::cout << "calling Single_Operation4_Kernel\n";
     Single_Operation4_Kernel<<<blockPerGrid, threadsPerBlock, sm_size,
                                stream>>>(task);
-    ErrorSyncCheck(hipDeviceSynchronize(), task);
+    DeviceRuntime<HIP>::SyncQueue(task.GetQueueIdx());
 
     // std::cout << "calling Single_Operation5_Kernel\n";
     Single_Operation5_Kernel<<<blockPerGrid, threadsPerBlock, sm_size,
                                stream>>>(task);
-    ErrorSyncCheck(hipDeviceSynchronize(), task);
+    DeviceRuntime<HIP>::SyncQueue(task.GetQueueIdx());
 
     // std::cout << "calling Single_Operation6_Kernel\n";
     Single_Operation6_Kernel<<<blockPerGrid, threadsPerBlock, sm_size,
                                stream>>>(task);
-    ErrorSyncCheck(hipDeviceSynchronize(), task);
+    DeviceRuntime<HIP>::SyncQueue(task.GetQueueIdx());
 
     // std::cout << "calling Single_Operation7_Kernel\n";
     Single_Operation7_Kernel<<<blockPerGrid, threadsPerBlock, sm_size,
                                stream>>>(task);
-    ErrorSyncCheck(hipDeviceSynchronize(), task);
+    DeviceRuntime<HIP>::SyncQueue(task.GetQueueIdx());
 
     // std::cout << "calling Single_Operation8_Kernel\n";
     Single_Operation8_Kernel<<<blockPerGrid, threadsPerBlock, sm_size,
                                stream>>>(task);
-    ErrorSyncCheck(hipDeviceSynchronize(), task);
+    DeviceRuntime<HIP>::SyncQueue(task.GetQueueIdx());
   }
 
   // std::cout << "calling Single_Operation9_Kernel\n";
   Single_Operation9_Kernel<<<blockPerGrid, threadsPerBlock, sm_size, stream>>>(
       task);
-  ErrorSyncCheck(hipDeviceSynchronize(), task);
+  DeviceRuntime<HIP>::SyncQueue(task.GetQueueIdx());
 
   // std::cout << "calling Single_Operation10_Kernel\n";
   Single_Operation10_Kernel<<<blockPerGrid, threadsPerBlock, sm_size, stream>>>(
       task);
-  ErrorSyncCheck(hipDeviceSynchronize(), task);
+  DeviceRuntime<HIP>::SyncQueue(task.GetQueueIdx());
 }
 
 template <typename TaskType> class DeviceAdapter<TaskType, HIP> {
@@ -1961,29 +1983,29 @@ public:
     // if constexpr evaluate at compile time otherwise this does not compile
     if constexpr (std::is_base_of<Functor<HIP>,
                                   typename TaskType::Functor>::value) {
-      Kernel<<<blockPerGrid, threadsPerBlock, sm_size, stream>>>(task);
+      HipKernel<<<blockPerGrid, threadsPerBlock, sm_size, stream>>>(task);
     } else if constexpr (std::is_base_of<IterFunctor<HIP>,
                                          typename TaskType::Functor>::value) {
-      IterKernel<<<blockPerGrid, threadsPerBlock, sm_size, stream>>>(task);
+      HipIterKernel<<<blockPerGrid, threadsPerBlock, sm_size, stream>>>(task);
     } else if constexpr (std::is_base_of<HuffmanCLCustomizedFunctor<HIP>,
                                          typename TaskType::Functor>::value) {
       if (task.GetFunctor().use_CG && DeviceRuntime<HIP>::SupportCG()) {
         void *Args[] = {(void *)&task};
-        hipLaunchCooperativeKernel((void *)HuffmanCLCustomizedKernel<TaskType>,
-                                   blockPerGrid, threadsPerBlock, Args, sm_size,
-                                   stream);
+        hipLaunchCooperativeKernel(
+            (void *)HipHuffmanCLCustomizedKernel<TaskType>, blockPerGrid,
+            threadsPerBlock, Args, sm_size, stream);
       } else {
-        HuffmanCLCustomizedNoCGKernel(task);
+        HipHuffmanCLCustomizedNoCGKernel(task);
       }
     } else if constexpr (std::is_base_of<HuffmanCWCustomizedFunctor<HIP>,
                                          typename TaskType::Functor>::value) {
       if (task.GetFunctor().use_CG && DeviceRuntime<HIP>::SupportCG()) {
         void *Args[] = {(void *)&task};
-        hipLaunchCooperativeKernel((void *)HuffmanCWCustomizedKernel<TaskType>,
-                                   blockPerGrid, threadsPerBlock, Args, sm_size,
-                                   stream);
+        hipLaunchCooperativeKernel(
+            (void *)HipHuffmanCWCustomizedKernel<TaskType>, blockPerGrid,
+            threadsPerBlock, Args, sm_size, stream);
       } else {
-        HuffmanCWCustomizedNoCGKernel(task);
+        HipHuffmanCWCustomizedNoCGKernel(task);
       }
     }
     ErrorAsyncCheck(hipGetLastError(), task);
@@ -2009,6 +2031,186 @@ public:
   }
 };
 
+template <> class DeviceLauncher<HIP> {
+public:
+  template <typename TaskType>
+  MGARDX_CONT int static IsResourceEnough(TaskType &task) {
+    if (task.GetBlockDimX() * task.GetBlockDimY() * task.GetBlockDimZ() >
+        DeviceRuntime<HIP>::GetMaxNumThreadsPerTB()) {
+      return THREADBLOCK_TOO_LARGE;
+    }
+    if (task.GetSharedMemorySize() >
+        DeviceRuntime<HIP>::GetMaxSharedMemorySize()) {
+      return SHARED_MEMORY_TOO_LARGE;
+    }
+    return RESOURCE_ENOUGH;
+  }
+
+  template <typename TaskType>
+  MGARDX_CONT ExecutionReturn static Execute(TaskType &task) {
+
+    dim3 threadsPerBlock(task.GetBlockDimX(), task.GetBlockDimY(),
+                         task.GetBlockDimZ());
+    dim3 blockPerGrid(task.GetGridDimX(), task.GetGridDimY(),
+                      task.GetGridDimZ());
+    size_t sm_size = task.GetSharedMemorySize();
+    // printf("exec config (%d %d %d) (%d %d %d) sm_size: %llu\n",
+    // threadsPerBlock.x, threadsPerBlock.y, threadsPerBlock.z,
+    //                 blockPerGrid.x, blockPerGrid.y, blockPerGrid.z, sm_size);
+    hipStream_t stream = DeviceRuntime<HIP>::GetQueue(task.GetQueueIdx());
+
+    if (DeviceRuntime<HIP>::PrintKernelConfig) {
+      std::cout << log::log_info << task.GetFunctorName() << ": <"
+                << task.GetBlockDimX() << ", " << task.GetBlockDimY() << ", "
+                << task.GetBlockDimZ() << "> <" << task.GetGridDimX() << ", "
+                << task.GetGridDimY() << ", " << task.GetGridDimZ() << ">\n";
+    }
+
+    ExecutionReturn ret;
+    if (IsResourceEnough(task) != RESOURCE_ENOUGH) {
+      if (DeviceRuntime<HIP>::PrintKernelConfig) {
+        if (IsResourceEnough(task) == THREADBLOCK_TOO_LARGE) {
+          log::info("threadblock too large.");
+        }
+        if (IsResourceEnough(task) == SHARED_MEMORY_TOO_LARGE) {
+          log::info("shared memory too large.");
+        }
+      }
+      ret.success = false;
+      ret.execution_time = std::numeric_limits<double>::max();
+      return ret;
+    }
+
+    Timer timer;
+    if (task.GetQueueIdx() == MGARDX_SYNCHRONIZED_QUEUE ||
+        DeviceRuntime<HIP>::TimingAllKernels ||
+        AutoTuner<HIP>::ProfileKernels) {
+      DeviceRuntime<HIP>::SyncDevice();
+      timer.start();
+    }
+
+    // if constexpr evaluate at compile time otherwise this does not compile
+    if constexpr (std::is_base_of<Functor<HIP>,
+                                  typename TaskType::Functor>::value) {
+      HipKernel<<<blockPerGrid, threadsPerBlock, sm_size, stream>>>(task);
+    } else if constexpr (std::is_base_of<IterFunctor<HIP>,
+                                         typename TaskType::Functor>::value) {
+      HipIterKernel<<<blockPerGrid, threadsPerBlock, sm_size, stream>>>(task);
+    } else if constexpr (std::is_base_of<HuffmanCLCustomizedFunctor<HIP>,
+                                         typename TaskType::Functor>::value) {
+      if (task.GetFunctor().use_CG && DeviceRuntime<HIP>::SupportCG()) {
+        void *Args[] = {(void *)&task};
+        hipLaunchCooperativeKernel(
+            (void *)HipHuffmanCLCustomizedKernel<TaskType>, blockPerGrid,
+            threadsPerBlock, Args, sm_size, stream);
+      } else {
+        HipHuffmanCLCustomizedNoCGKernel(task);
+      }
+    } else if constexpr (std::is_base_of<HuffmanCWCustomizedFunctor<HIP>,
+                                         typename TaskType::Functor>::value) {
+      if (task.GetFunctor().use_CG && DeviceRuntime<HIP>::SupportCG()) {
+        void *Args[] = {(void *)&task};
+        hipLaunchCooperativeKernel(
+            (void *)HipHuffmanCWCustomizedKernel<TaskType>, blockPerGrid,
+            threadsPerBlock, Args, sm_size, stream);
+      } else {
+        HipHuffmanCWCustomizedNoCGKernel(task);
+      }
+    }
+    ErrorAsyncCheck(hipGetLastError(), task);
+    gpuErrchk(hipGetLastError());
+    if (DeviceRuntime<HIP>::SyncAllKernelsAndCheckErrors) {
+      ErrorSyncCheck(hipDeviceSynchronize(), task);
+    }
+
+    if (task.GetQueueIdx() == MGARDX_SYNCHRONIZED_QUEUE ||
+        DeviceRuntime<HIP>::TimingAllKernels ||
+        AutoTuner<HIP>::ProfileKernels) {
+      DeviceRuntime<HIP>::SyncDevice();
+      timer.end();
+      if (DeviceRuntime<HIP>::TimingAllKernels) {
+        timer.print(task.GetFunctorName());
+      }
+      if (AutoTuner<HIP>::ProfileKernels) {
+        ret.success = true;
+        ret.execution_time = timer.get();
+      }
+    }
+    return ret;
+  }
+
+  template <typename TaskType>
+  MGARDX_CONT static void ConfigTask(TaskType task) {
+    typename TaskType::Functor functor;
+    int maxbytes = DeviceRuntime<HIP>::GetMaxSharedMemorySize();
+    DeviceRuntime<HIP>::SetMaxDynamicSharedMemorySize(functor, maxbytes);
+  }
+
+  template <typename KernelType>
+  MGARDX_CONT static void AutoTune(KernelType kernel, int queue_idx) {
+#if MGARD_ENABLE_AUTO_TUNING
+    double min_time = std::numeric_limits<double>::max();
+    int min_config = 0;
+    ExecutionReturn ret;
+#define RUN_CONFIG(CONFIG_IDX)                                                 \
+  {                                                                            \
+    constexpr ExecutionConfig config =                                         \
+        GetExecutionConfig<KernelType::NumDim>(CONFIG_IDX);                    \
+    auto task =                                                                \
+        kernel.template GenTask<config.z, config.y, config.x>(queue_idx);      \
+    if constexpr (KernelType::EnableConfig()) {                                \
+      ConfigTask(task);                                                        \
+    }                                                                          \
+    ret = Execute(task);                                                       \
+    if (ret.success && min_time > ret.execution_time) {                        \
+      min_time = ret.execution_time;                                           \
+      min_config = CONFIG_IDX;                                                 \
+    }                                                                          \
+  }
+    RUN_CONFIG(0)
+    RUN_CONFIG(1)
+    RUN_CONFIG(2)
+    RUN_CONFIG(3)
+    RUN_CONFIG(4)
+    RUN_CONFIG(5)
+    RUN_CONFIG(6)
+#undef RUN_CONFIG
+    if (AutoTuner<HIP>::WriteToTable) {
+      FillAutoTunerTable<KernelType::NumDim, typename KernelType::DataType,
+                         HIP>(std::string(KernelType::Name), min_config);
+    }
+#else
+    log::err("MGARD is not built with auto tuning enabled.");
+    exit(-1);
+#endif
+  }
+
+  template <typename KernelType>
+  MGARDX_CONT static void Execute(KernelType kernel, int queue_idx) {
+    if constexpr (KernelType::EnableAutoTuning()) {
+      constexpr ExecutionConfig config =
+          GetExecutionConfig<KernelType::NumDim, typename KernelType::DataType,
+                             HIP>(KernelType::Name);
+      auto task =
+          kernel.template GenTask<config.z, config.y, config.x>(queue_idx);
+      if constexpr (KernelType::EnableConfig()) {
+        ConfigTask(task);
+      }
+      Execute(task);
+
+      if (AutoTuner<HIP>::ProfileKernels) {
+        AutoTune(kernel, queue_idx);
+      }
+    } else {
+      auto task = kernel.GenTask(queue_idx);
+      if constexpr (KernelType::EnableConfig()) {
+        ConfigTask(task);
+      }
+      Execute(task);
+    }
+  }
+};
+
 struct AbsMaxOp {
   template <typename T>
   __device__ __forceinline__ T operator()(const T &a, const T &b) const {
@@ -2029,137 +2231,136 @@ public:
   DeviceCollective(){};
 
   template <typename T>
-  MGARDX_CONT static void Sum(SIZE n, SubArray<1, T, HIP> &v,
-                              SubArray<1, T, HIP> &result, int queue_idx) {
-    void *d_temp_storage = NULL;
-    size_t temp_storage_bytes = 0;
+  MGARDX_CONT static void Sum(SIZE n, SubArray<1, T, HIP> v,
+                              SubArray<1, T, HIP> result,
+                              Array<1, Byte, HIP> &workspace, int queue_idx) {
+    Byte *d_temp_storage =
+        workspace.hasDeviceAllocation() ? workspace.data() : nullptr;
+    size_t temp_storage_bytes =
+        workspace.hasDeviceAllocation() ? workspace.shape(0) : 0;
     hipStream_t stream = DeviceRuntime<HIP>::GetQueue(queue_idx);
     bool debug = DeviceRuntime<HIP>::SyncAllKernelsAndCheckErrors;
     hipcub::DeviceReduce::Sum(d_temp_storage, temp_storage_bytes, v.data(),
                               result.data(), n, stream, debug);
-    MemoryManager<HIP>::Malloc1D(d_temp_storage, temp_storage_bytes, queue_idx);
-    hipcub::DeviceReduce::Sum(d_temp_storage, temp_storage_bytes, v.data(),
-                              result.data(), n, stream, debug);
-    DeviceRuntime<HIP>::SyncQueue(queue_idx);
-    MemoryManager<HIP>::Free(d_temp_storage, MGARDX_SYNCHRONIZED_QUEUE);
+    if (!workspace.hasDeviceAllocation()) {
+      workspace = Array<1, Byte, HIP>({(SIZE)temp_storage_bytes});
+    }
   }
 
   template <typename T>
-  MGARDX_CONT static void AbsMax(SIZE n, SubArray<1, T, HIP> &v,
-                                 SubArray<1, T, HIP> &result, int queue_idx) {
-    void *d_temp_storage = NULL;
-    size_t temp_storage_bytes = 0;
+  MGARDX_CONT static void
+  AbsMax(SIZE n, SubArray<1, T, HIP> v, SubArray<1, T, HIP> result,
+         Array<1, Byte, HIP> &workspace, int queue_idx) {
+    Byte *d_temp_storage =
+        workspace.hasDeviceAllocation() ? workspace.data() : nullptr;
+    size_t temp_storage_bytes =
+        workspace.hasDeviceAllocation() ? workspace.shape(0) : 0;
     AbsMaxOp absMaxOp;
     hipStream_t stream = DeviceRuntime<HIP>::GetQueue(queue_idx);
     bool debug = DeviceRuntime<HIP>::SyncAllKernelsAndCheckErrors;
     hipcub::DeviceReduce::Reduce(d_temp_storage, temp_storage_bytes, v.data(),
                                  result.data(), n, absMaxOp, 0, stream, debug);
-    MemoryManager<HIP>::Malloc1D(d_temp_storage, temp_storage_bytes, queue_idx);
-    hipcub::DeviceReduce::Reduce(d_temp_storage, temp_storage_bytes, v.data(),
-                                 result.data(), n, absMaxOp, 0, stream, debug);
-    DeviceRuntime<HIP>::SyncQueue(queue_idx);
-    MemoryManager<HIP>::Free(d_temp_storage, MGARDX_SYNCHRONIZED_QUEUE);
+    if (!workspace.hasDeviceAllocation()) {
+      workspace = Array<1, Byte, HIP>({(SIZE)temp_storage_bytes});
+    }
   }
 
   template <typename T>
-  MGARDX_CONT static void SquareSum(SIZE n, SubArray<1, T, HIP> &v,
-                                    SubArray<1, T, HIP> &result,
-                                    int queue_idx) {
+  MGARDX_CONT static void
+  SquareSum(SIZE n, SubArray<1, T, HIP> v, SubArray<1, T, HIP> result,
+            Array<1, Byte, HIP> &workspace, int queue_idx) {
     SquareOp squareOp;
     hipcub::TransformInputIterator<T, SquareOp, T *> transformed_input_iter(
         v.data(), squareOp);
-    void *d_temp_storage = NULL;
-    size_t temp_storage_bytes = 0;
+    Byte *d_temp_storage =
+        workspace.hasDeviceAllocation() ? workspace.data() : nullptr;
+    size_t temp_storage_bytes =
+        workspace.hasDeviceAllocation() ? workspace.shape(0) : 0;
     hipStream_t stream = DeviceRuntime<HIP>::GetQueue(queue_idx);
     bool debug = DeviceRuntime<HIP>::SyncAllKernelsAndCheckErrors;
     hipcub::DeviceReduce::Sum(d_temp_storage, temp_storage_bytes,
                               transformed_input_iter, result.data(), n, stream,
                               debug);
-    MemoryManager<HIP>::Malloc1D(d_temp_storage, temp_storage_bytes, queue_idx);
-    hipcub::DeviceReduce::Sum(d_temp_storage, temp_storage_bytes,
-                              transformed_input_iter, result.data(), n, stream,
-                              debug);
-    DeviceRuntime<HIP>::SyncQueue(queue_idx);
-    MemoryManager<HIP>::Free(d_temp_storage, MGARDX_SYNCHRONIZED_QUEUE);
+    if (!workspace.hasDeviceAllocation()) {
+      workspace = Array<1, Byte, HIP>({(SIZE)temp_storage_bytes});
+    }
   }
 
   template <typename T>
-  MGARDX_CONT static void ScanSumInclusive(SIZE n, SubArray<1, T, HIP> &v,
-                                           SubArray<1, T, HIP> &result,
-                                           int queue_idx) {
-    Byte *d_temp_storage = NULL;
-    size_t temp_storage_bytes = 0;
+  MGARDX_CONT static void
+  ScanSumInclusive(SIZE n, SubArray<1, T, HIP> v, SubArray<1, T, HIP> result,
+                   Array<1, Byte, HIP> &workspace, int queue_idx) {
+    Byte *d_temp_storage =
+        workspace.hasDeviceAllocation() ? workspace.data() : nullptr;
+    size_t temp_storage_bytes =
+        workspace.hasDeviceAllocation() ? workspace.shape(0) : 0;
     hipStream_t stream = DeviceRuntime<HIP>::GetQueue(queue_idx);
     bool debug = DeviceRuntime<HIP>::SyncAllKernelsAndCheckErrors;
     hipcub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes,
                                      v.data(), result.data(), n, stream, debug);
-    MemoryManager<HIP>::Malloc1D(d_temp_storage, temp_storage_bytes, queue_idx);
-    hipcub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes,
-                                     v.data(), result.data(), n, stream, debug);
-    DeviceRuntime<HIP>::SyncQueue(queue_idx);
-    MemoryManager<HIP>::Free(d_temp_storage, MGARDX_SYNCHRONIZED_QUEUE);
+    if (!workspace.hasDeviceAllocation()) {
+      workspace = Array<1, Byte, HIP>({(SIZE)temp_storage_bytes});
+    }
   }
 
   template <typename T>
-  MGARDX_CONT static void ScanSumExclusive(SIZE n, SubArray<1, T, HIP> &v,
-                                           SubArray<1, T, HIP> &result,
-                                           int queue_idx) {
-    Byte *d_temp_storage = NULL;
-    size_t temp_storage_bytes = 0;
+  MGARDX_CONT static void
+  ScanSumExclusive(SIZE n, SubArray<1, T, HIP> v, SubArray<1, T, HIP> result,
+                   Array<1, Byte, HIP> &workspace, int queue_idx) {
+    Byte *d_temp_storage =
+        workspace.hasDeviceAllocation() ? workspace.data() : nullptr;
+    size_t temp_storage_bytes =
+        workspace.hasDeviceAllocation() ? workspace.shape(0) : 0;
     hipStream_t stream = DeviceRuntime<HIP>::GetQueue(queue_idx);
     bool debug = DeviceRuntime<HIP>::SyncAllKernelsAndCheckErrors;
     hipcub::DeviceScan::ExclusiveSum(d_temp_storage, temp_storage_bytes,
                                      v.data(), result.data(), n, stream, debug);
-    MemoryManager<HIP>::Malloc1D(d_temp_storage, temp_storage_bytes, queue_idx);
-    hipcub::DeviceScan::ExclusiveSum(d_temp_storage, temp_storage_bytes,
-                                     v.data(), result.data(), n, stream, debug);
-    DeviceRuntime<HIP>::SyncQueue(queue_idx);
-    MemoryManager<HIP>::Free(d_temp_storage, MGARDX_SYNCHRONIZED_QUEUE);
+    if (!workspace.hasDeviceAllocation()) {
+      workspace = Array<1, Byte, HIP>({(SIZE)temp_storage_bytes});
+    }
   }
 
   template <typename T>
-  MGARDX_CONT static void ScanSumExtended(SIZE n, SubArray<1, T, HIP> &v,
-                                          SubArray<1, T, HIP> &result,
-                                          int queue_idx) {
-    Byte *d_temp_storage = NULL;
-    size_t temp_storage_bytes = 0;
+  MGARDX_CONT static void
+  ScanSumExtended(SIZE n, SubArray<1, T, HIP> v, SubArray<1, T, HIP> result,
+                  Array<1, Byte, HIP> &workspace, int queue_idx) {
+    Byte *d_temp_storage =
+        workspace.hasDeviceAllocation() ? workspace.data() : nullptr;
+    size_t temp_storage_bytes =
+        workspace.hasDeviceAllocation() ? workspace.shape(0) : 0;
     hipStream_t stream = DeviceRuntime<HIP>::GetQueue(queue_idx);
     bool debug = DeviceRuntime<HIP>::SyncAllKernelsAndCheckErrors;
     hipcub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes,
                                      v.data(), result.data() + 1, n, stream,
                                      debug);
-    MemoryManager<HIP>::Malloc1D(d_temp_storage, temp_storage_bytes, queue_idx);
-    hipcub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes,
-                                     v.data(), result.data() + 1, n, stream,
-                                     debug);
-    T zero = 0;
-    MemoryManager<HIP>::Copy1D(result.data(), &zero, 1, queue_idx);
-    MemoryManager<HIP>::Free(d_temp_storage, MGARDX_SYNCHRONIZED_QUEUE);
+    if (result.hasDeviceAllocation()) {
+      T zero = 0;
+      MemoryManager<HIP>().Copy1D(result.data(), &zero, 1, queue_idx);
+    }
+    if (!workspace.hasDeviceAllocation()) {
+      workspace = Array<1, Byte, HIP>({(SIZE)temp_storage_bytes});
+    }
   }
 
   template <typename KeyT, typename ValueT>
-  MGARDX_CONT static void SortByKey(SIZE n, SubArray<1, KeyT, HIP> &keys,
-                                    SubArray<1, ValueT, HIP> &values,
-                                    int queue_idx) {
-    void *d_temp_storage = NULL;
-    size_t temp_storage_bytes = 0;
+  MGARDX_CONT static void
+  SortByKey(SIZE n, SubArray<1, KeyT, HIP> in_keys,
+            SubArray<1, ValueT, HIP> in_values, SubArray<1, KeyT, HIP> out_keys,
+            SubArray<1, ValueT, HIP> out_values, Array<1, Byte, HIP> &workspace,
+            int queue_idx) {
+    Byte *d_temp_storage =
+        workspace.hasDeviceAllocation() ? workspace.data() : nullptr;
+    size_t temp_storage_bytes =
+        workspace.hasDeviceAllocation() ? workspace.shape(0) : 0;
     hipStream_t stream = DeviceRuntime<HIP>::GetQueue(queue_idx);
     bool debug = DeviceRuntime<HIP>::SyncAllKernelsAndCheckErrors;
-    Array<1, KeyT, HIP> out_keys({n});
-    Array<1, ValueT, HIP> out_values({n});
-
     hipcub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes,
-                                       keys.data(), out_keys.data(),
-                                       values.data(), out_values.data(), n, 0,
-                                       sizeof(KeyT) * 8, stream, debug);
-    MemoryManager<HIP>::Malloc1D(d_temp_storage, temp_storage_bytes, queue_idx);
-    hipcub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes,
-                                       keys.data(), out_keys.data(),
-                                       values.data(), out_values.data(), n, 0,
-                                       sizeof(KeyT) * 8, stream, debug);
-    MemoryManager<HIP>::Copy1D(keys.data(), out_keys.data(), n, queue_idx);
-    MemoryManager<HIP>::Copy1D(values.data(), out_values.data(), n, queue_idx);
-    MemoryManager<HIP>::Free(d_temp_storage, MGARDX_SYNCHRONIZED_QUEUE);
+                                       in_keys.data(), out_keys.data(),
+                                       in_values.data(), out_values.data(), n,
+                                       0, sizeof(KeyT) * 8, stream, debug);
+    if (!workspace.hasDeviceAllocation()) {
+      workspace = Array<1, Byte, HIP>({(SIZE)temp_storage_bytes});
+    }
   }
 };
 

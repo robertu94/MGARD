@@ -129,7 +129,7 @@ void compression(std::vector<mgard_x::SIZE> shape, enum device dev, T tol, T s,
 #endif
   } else {
     mgard_x::Config config;
-    config.lossless = mgard_x::lossless_type::Huffman;
+    config.lossless = mgard_x::lossless_type::Huffman_Zstd;
     config.normalize_coordinates = true;
     mgard_x::data_type dtype;
     if (std::is_same<T, double>::value) {
@@ -403,22 +403,22 @@ int main(int argc, char *argv[]) {
 
   std::vector<std::vector<mgard_x::SIZE>> shapes;
 
-  shapes.push_back({5});
-  shapes.push_back({129});
-  shapes.push_back({100});
-  shapes.push_back({400});
-  shapes.push_back({1000});
+  // shapes.push_back({1000000});
+  // shapes.push_back({10000000});
+  // shapes.push_back({100000000});
+  // shapes.push_back({1e9});
+  // shapes.push_back({1000});
 
-  shapes.push_back({5, 5});
-  shapes.push_back({129, 129});
-  shapes.push_back({100, 100});
-  shapes.push_back({1000, 1000});
-  shapes.push_back({100, 1000});
-  shapes.push_back({1000, 100});
-  shapes.push_back({10, 1000});
-  shapes.push_back({1000, 10});
+  // shapes.push_back({10000, 10000});
+  // shapes.push_back({10000, });
+  // shapes.push_back({100, 100});
+  // shapes.push_back({1000, 1000});
+  // shapes.push_back({100, 1000});
+  // shapes.push_back({1000, 100});
+  // shapes.push_back({10, 1000});
+  // shapes.push_back({1000, 10});
 
-  shapes.push_back({5, 5, 5});
+  // shapes.push_back({5, 5, 5});
   shapes.push_back({129, 129, 129});
   shapes.push_back({100, 100, 100});
   shapes.push_back({200, 200, 200});
@@ -455,8 +455,8 @@ int main(int argc, char *argv[]) {
 
   std::vector<enum data_type> dtypes = {data_type::SINGLE, data_type::DOUBLE};
   // std::vector<enum data_type> dtypes = {data_type::SINGLE};
-  std::vector<enum error_type> ebtypes = {error_type::ABS, error_type::REL};
-  // std::vector<enum error_type> ebtypes = {error_type::REL};
+  // std::vector<enum error_type> ebtypes = {error_type::ABS, error_type::REL};
+  std::vector<enum error_type> ebtypes = {error_type::REL};
   // std::vector<enum error_type> ebtypes = {error_type::ABS};
 
   std::vector<float> tols = {1e-2, 1e-3, 1e-4};

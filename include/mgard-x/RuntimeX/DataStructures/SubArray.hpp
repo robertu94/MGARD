@@ -19,7 +19,7 @@ public:
   SubArray();
 
   MGARDX_CONT
-  SubArray(Array<D, T, DeviceType> &array, bool get_host_pointer = false);
+  SubArray(Array<D, T, DeviceType> &array);
 
   MGARDX_CONT
   SubArray(std::vector<SIZE> shape, T *dv);
@@ -94,7 +94,7 @@ public:
   void resize(std::vector<SIZE> shape);
 
   MGARDX_CONT
-  void offset(DIM dim, SIZE offset_value);
+  void offset_dim(DIM dim, SIZE offset_value);
 
   MGARDX_CONT
   void resize(DIM dim, SIZE new_size);
@@ -138,15 +138,15 @@ public:
     dv += calc_offset(idx);
   }
 
-  MGARDX_EXEC void offset(IDX z, IDX y, IDX x) {
+  MGARDX_EXEC void offset_3d(IDX z, IDX y, IDX x) {
     ptr_offset += __lddv2 * __lddv1 * z + __lddv1 * y + x;
     dv += __lddv2 * __lddv1 * z + __lddv1 * y + x;
   }
-  MGARDX_EXEC void offset(IDX y, IDX x) {
+  MGARDX_EXEC void offset_2d(IDX y, IDX x) {
     ptr_offset += __lddv1 * y + x;
     dv += __lddv1 * y + x;
   }
-  MGARDX_EXEC void offset(IDX x) {
+  MGARDX_EXEC void offset_1d(IDX x) {
     ptr_offset += x;
     dv += x;
   }
@@ -223,8 +223,8 @@ MGARDX_CONT_EXEC SubArray<D, T, DeviceType>::SubArray() {
 }
 
 template <DIM D, typename T, typename DeviceType>
-MGARDX_CONT SubArray<D, T, DeviceType>::SubArray(Array<D, T, DeviceType> &array,
-                                                 bool get_host_pointer) {
+MGARDX_CONT
+SubArray<D, T, DeviceType>::SubArray(Array<D, T, DeviceType> &array) {
   initialize();
   dv = array.data();
   for (DIM d = 0; d < D; d++) {
@@ -234,8 +234,8 @@ MGARDX_CONT SubArray<D, T, DeviceType>::SubArray(Array<D, T, DeviceType> &array,
   __lddv1 = __ldvs[D - 1];
   if (D > 1)
     __lddv2 = __ldvs[D - 2];
-  if (get_host_pointer) {
-    v = array.hostCopy();
+  if (array.hasHostAllocation()) {
+    v = array.dataHost();
     has_host_pointer = true;
   }
   pitched = array.isPitched();
@@ -335,8 +335,8 @@ MGARDX_CONT void SubArray<D, T, DeviceType>::resize(std::vector<SIZE> shape) {
 }
 
 template <DIM D, typename T, typename DeviceType>
-MGARDX_CONT void SubArray<D, T, DeviceType>::offset(DIM dim,
-                                                    SIZE offset_value) {
+MGARDX_CONT void SubArray<D, T, DeviceType>::offset_dim(DIM dim,
+                                                        SIZE offset_value) {
   if (dim >= D)
     return;
   SIZE idx[D];

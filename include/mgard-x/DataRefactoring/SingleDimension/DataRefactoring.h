@@ -37,25 +37,25 @@ void CalcCorrection(Hierarchy<D, T, DeviceType> &hierarchy,
 
 template <DIM D, typename T, typename DeviceType>
 void CopyND(SubArray<D, T, DeviceType> dinput,
-            SubArray<D, T, DeviceType> &doutput, int queue_idx);
+            SubArray<D, T, DeviceType> doutput, int queue_idx);
 
 template <DIM D, typename T, typename DeviceType>
 void AddND(SubArray<D, T, DeviceType> dinput,
-           SubArray<D, T, DeviceType> &doutput, int queue_idx);
+           SubArray<D, T, DeviceType> doutput, int queue_idx);
 
 template <DIM D, typename T, typename DeviceType>
 void SubtractND(SubArray<D, T, DeviceType> dinput,
-                SubArray<D, T, DeviceType> &doutput, int queue_idx);
+                SubArray<D, T, DeviceType> doutput, int queue_idx);
 
 template <DIM D, typename T, typename DeviceType>
 void decompose_single(Hierarchy<D, T, DeviceType> &hierarchy,
-                      SubArray<D, T, DeviceType> &v, int stop_level,
-                      int queue_idx);
+                      SubArray<D, T, DeviceType> &v, int start_level,
+                      int stop_level, int queue_idx);
 
 template <DIM D, typename T, typename DeviceType>
 void recompose_single(Hierarchy<D, T, DeviceType> &hierarchy,
-                      SubArray<D, T, DeviceType> &v, int stop_level,
-                      int queue_idx);
+                      SubArray<D, T, DeviceType> &v, int start_level,
+                      int stop_level, int queue_idx);
 
 } // namespace mgard_x
 

@@ -5,7 +5,7 @@
  * Date: March 17, 2022
  */
 
-#include "../../../Hierarchy/Hierarchy.hpp"
+#include "../../../Hierarchy/Hierarchy.h"
 #include "../../../RuntimeX/RuntimeX.h"
 
 #include "../DataRefactoring.h"
@@ -38,9 +38,8 @@ void CalcCorrectionND(Hierarchy<D, T, DeviceType> &hierarchy,
   SubArray<D, T, DeviceType> dw_out = dcorrection;
 
   SubArray<1, SIZE, DeviceType> shape, shape_c;
-  shape = SubArray<1, SIZE, DeviceType>(hierarchy.level_shape_array(l), true);
-  shape_c =
-      SubArray<1, SIZE, DeviceType>(hierarchy.level_shape_array(l - 1), true);
+  shape = SubArray<1, SIZE, DeviceType>(hierarchy.level_shape_array(l));
+  shape_c = SubArray<1, SIZE, DeviceType>(hierarchy.level_shape_array(l - 1));
 
   DIM processed_n;
   SubArray<1, DIM, DeviceType> processed_dims;
@@ -54,7 +53,7 @@ void CalcCorrectionND(Hierarchy<D, T, DeviceType> &hierarchy,
   curr_dim_f = D - 1, curr_dim_c = D - 2, curr_dim_r = D - 3;
 
   dw_in1.resize(curr_dim_f, hierarchy.level_shape(l - 1, curr_dim_f));
-  dw_in2.offset(curr_dim_f, hierarchy.level_shape(l - 1, curr_dim_f));
+  dw_in2.offset_dim(curr_dim_f, hierarchy.level_shape(l - 1, curr_dim_f));
   dw_in2.resize(curr_dim_f, hierarchy.level_shape(l, curr_dim_f) -
                                 hierarchy.level_shape(l - 1, curr_dim_f));
   dw_out.resize(curr_dim_f, hierarchy.level_shape(l - 1, curr_dim_f));
@@ -69,11 +68,13 @@ void CalcCorrectionND(Hierarchy<D, T, DeviceType> &hierarchy,
   dist = SubArray(hierarchy.dist(l, curr_dim_f));
   ratio = SubArray(hierarchy.ratio(l, curr_dim_f));
 
-  processed_dims = SubArray(hierarchy.processed(0, processed_n), true);
+  processed_dims = SubArray(hierarchy.processed(0, processed_n));
 
-  Lpk1Reo<D, T, DeviceType>().Execute(
-      shape, shape_c, processed_n, processed_dims, curr_dim_r, curr_dim_c,
-      curr_dim_f, dist, ratio, dw_in1, dw_in2, dw_out, queue_idx);
+  DeviceLauncher<DeviceType>::Execute(
+      Lpk1ReoKernel<D, T, DeviceType>(
+          shape, shape_c, processed_n, processed_dims, curr_dim_r, curr_dim_c,
+          curr_dim_f, dist, ratio, dw_in1, dw_in2, dw_out),
+      queue_idx);
 
   if (multidim_refactoring_debug_print) { // debug
     PrintSubarray4D(format("decomposition: after MR-1D[{}]", l), dw_out);
@@ -85,10 +86,10 @@ void CalcCorrectionND(Hierarchy<D, T, DeviceType> &hierarchy,
 
   curr_dim_f = D - 1, curr_dim_c = D - 2, curr_dim_r = D - 3;
   dw_in1.resize(curr_dim_c, hierarchy.level_shape(l - 1, curr_dim_c));
-  dw_in2.offset(curr_dim_c, hierarchy.level_shape(l - 1, curr_dim_c));
+  dw_in2.offset_dim(curr_dim_c, hierarchy.level_shape(l - 1, curr_dim_c));
   dw_in2.resize(curr_dim_c, hierarchy.level_shape(l, curr_dim_c) -
                                 hierarchy.level_shape(l - 1, curr_dim_c));
-  dw_out.offset(prev_dim_f, hierarchy.level_shape(l - 1, curr_dim_f));
+  dw_out.offset_dim(prev_dim_f, hierarchy.level_shape(l - 1, curr_dim_f));
   dw_out.resize(curr_dim_c, hierarchy.level_shape(l - 1, curr_dim_c));
   prev_dim_f = curr_dim_f;
   prev_dim_c = curr_dim_c;
@@ -101,11 +102,13 @@ void CalcCorrectionND(Hierarchy<D, T, DeviceType> &hierarchy,
   dist = SubArray(hierarchy.dist(l, curr_dim_c));
   ratio = SubArray(hierarchy.ratio(l, curr_dim_c));
 
-  processed_dims = SubArray(hierarchy.processed(1, processed_n), true);
+  processed_dims = SubArray(hierarchy.processed(1, processed_n));
 
-  Lpk2Reo<D, T, DeviceType>().Execute(
-      shape, shape_c, processed_n, processed_dims, curr_dim_r, curr_dim_c,
-      curr_dim_f, dist, ratio, dw_in1, dw_in2, dw_out, queue_idx);
+  DeviceLauncher<DeviceType>::Execute(
+      Lpk2ReoKernel<D, T, DeviceType>(
+          shape, shape_c, processed_n, processed_dims, curr_dim_r, curr_dim_c,
+          curr_dim_f, dist, ratio, dw_in1, dw_in2, dw_out),
+      queue_idx);
 
   if (multidim_refactoring_debug_print) { // debug
     PrintSubarray4D(format("decomposition: after MR-2D[{}]", l), dw_out);
@@ -117,10 +120,10 @@ void CalcCorrectionND(Hierarchy<D, T, DeviceType> &hierarchy,
 
   curr_dim_f = D - 1, curr_dim_c = D - 2, curr_dim_r = D - 3;
   dw_in1.resize(curr_dim_r, hierarchy.level_shape(l - 1, curr_dim_r));
-  dw_in2.offset(curr_dim_r, hierarchy.level_shape(l - 1, curr_dim_r));
+  dw_in2.offset_dim(curr_dim_r, hierarchy.level_shape(l - 1, curr_dim_r));
   dw_in2.resize(curr_dim_r, hierarchy.level_shape(l, curr_dim_r) -
                                 hierarchy.level_shape(l - 1, curr_dim_r));
-  dw_out.offset(prev_dim_c, hierarchy.level_shape(l - 1, curr_dim_c));
+  dw_out.offset_dim(prev_dim_c, hierarchy.level_shape(l - 1, curr_dim_c));
   dw_out.resize(curr_dim_r, hierarchy.level_shape(l - 1, curr_dim_r));
   prev_dim_f = curr_dim_f;
   prev_dim_c = curr_dim_c;
@@ -133,11 +136,13 @@ void CalcCorrectionND(Hierarchy<D, T, DeviceType> &hierarchy,
   dist = SubArray(hierarchy.dist(l, curr_dim_r));
   ratio = SubArray(hierarchy.ratio(l, curr_dim_r));
 
-  processed_dims = SubArray(hierarchy.processed(2, processed_n), true);
+  processed_dims = SubArray(hierarchy.processed(2, processed_n));
 
-  Lpk3Reo<D, T, DeviceType>().Execute(
-      shape, shape_c, processed_n, processed_dims, curr_dim_r, curr_dim_c,
-      curr_dim_f, dist, ratio, dw_in1, dw_in2, dw_out, queue_idx);
+  DeviceLauncher<DeviceType>::Execute(
+      Lpk3ReoKernel<D, T, DeviceType>(
+          shape, shape_c, processed_n, processed_dims, curr_dim_r, curr_dim_c,
+          curr_dim_f, dist, ratio, dw_in1, dw_in2, dw_out),
+      queue_idx);
 
   if (multidim_refactoring_debug_print) { // debug
     PrintSubarray4D(format("decomposition: after MR-3D[{}]", l), dw_out);
@@ -150,10 +155,10 @@ void CalcCorrectionND(Hierarchy<D, T, DeviceType> &hierarchy,
 
     curr_dim_f = D - 1, curr_dim_c = D - 2, curr_dim_r = D - (i + 1);
     dw_in1.resize(curr_dim_r, hierarchy.level_shape(l - 1, curr_dim_r));
-    dw_in2.offset(curr_dim_r, hierarchy.level_shape(l - 1, curr_dim_r));
+    dw_in2.offset_dim(curr_dim_r, hierarchy.level_shape(l - 1, curr_dim_r));
     dw_in2.resize(curr_dim_r, hierarchy.level_shape(l, curr_dim_r) -
                                   hierarchy.level_shape(l - 1, curr_dim_r));
-    dw_out.offset(prev_dim_r, hierarchy.level_shape(l - 1, prev_dim_r));
+    dw_out.offset_dim(prev_dim_r, hierarchy.level_shape(l - 1, prev_dim_r));
     dw_out.resize(curr_dim_r, hierarchy.level_shape(l - 1, curr_dim_r));
     prev_dim_f = curr_dim_f;
     prev_dim_c = curr_dim_c;
@@ -166,11 +171,13 @@ void CalcCorrectionND(Hierarchy<D, T, DeviceType> &hierarchy,
     dist = SubArray(hierarchy.dist(l, curr_dim_r));
     ratio = SubArray(hierarchy.ratio(l, curr_dim_r));
 
-    processed_dims = SubArray(hierarchy.processed(i, processed_n), true);
+    processed_dims = SubArray(hierarchy.processed(i, processed_n));
 
-    Lpk3Reo<D, T, DeviceType>().Execute(
-        shape, shape_c, processed_n, processed_dims, curr_dim_r, curr_dim_c,
-        curr_dim_f, dist, ratio, dw_in1, dw_in2, dw_out, queue_idx);
+    DeviceLauncher<DeviceType>::Execute(
+        Lpk3ReoKernel<D, T, DeviceType>(
+            shape, shape_c, processed_n, processed_dims, curr_dim_r, curr_dim_c,
+            curr_dim_f, dist, ratio, dw_in1, dw_in2, dw_out),
+        queue_idx);
 
     if (multidim_refactoring_debug_print) { // debug
       PrintSubarray4D(format("decomposition: after MR-{}D[{}]", i + 1, l),
@@ -185,8 +192,10 @@ void CalcCorrectionND(Hierarchy<D, T, DeviceType> &hierarchy,
   am = hierarchy.am(l - 1, curr_dim_f);
   bm = hierarchy.bm(l - 1, curr_dim_f);
 
-  Ipk1Reo<D, T, DeviceType>().Execute(curr_dim_r, curr_dim_c, curr_dim_f, am,
-                                      bm, dw_out, queue_idx);
+  DeviceLauncher<DeviceType>::Execute(
+      Ipk1ReoKernel<D, T, DeviceType>(curr_dim_r, curr_dim_c, curr_dim_f, am,
+                                      bm, dw_out),
+      queue_idx);
 
   if (multidim_refactoring_debug_print) { // debug
     PrintSubarray4D(format("decomposition: after TR-1D[{}]", l), dw_out);
@@ -199,8 +208,10 @@ void CalcCorrectionND(Hierarchy<D, T, DeviceType> &hierarchy,
   am = hierarchy.am(l - 1, curr_dim_c);
   bm = hierarchy.bm(l - 1, curr_dim_c);
 
-  Ipk2Reo<D, T, DeviceType>().Execute(curr_dim_r, curr_dim_c, curr_dim_f, am,
-                                      bm, dw_out, queue_idx);
+  DeviceLauncher<DeviceType>::Execute(
+      Ipk2ReoKernel<D, T, DeviceType>(curr_dim_r, curr_dim_c, curr_dim_f, am,
+                                      bm, dw_out),
+      queue_idx);
 
   if (multidim_refactoring_debug_print) { // debug
     PrintSubarray4D(format("decomposition: after TR-2D[{}]", l), dw_out);
@@ -213,8 +224,10 @@ void CalcCorrectionND(Hierarchy<D, T, DeviceType> &hierarchy,
   am = hierarchy.am(l - 1, curr_dim_r);
   bm = hierarchy.bm(l - 1, curr_dim_r);
 
-  Ipk3Reo<D, T, DeviceType>().Execute(curr_dim_r, curr_dim_c, curr_dim_f, am,
-                                      bm, dw_out, queue_idx);
+  DeviceLauncher<DeviceType>::Execute(
+      Ipk3ReoKernel<D, T, DeviceType>(curr_dim_r, curr_dim_c, curr_dim_f, am,
+                                      bm, dw_out),
+      queue_idx);
 
   if (multidim_refactoring_debug_print) { // debug
     PrintSubarray4D(format("decomposition: after TR-3D[{}]", l), dw_out);
@@ -228,8 +241,12 @@ void CalcCorrectionND(Hierarchy<D, T, DeviceType> &hierarchy,
     dw_out.project(curr_dim_r, curr_dim_c, curr_dim_f);
     am = hierarchy.am(l - 1, curr_dim_r);
     bm = hierarchy.bm(l - 1, curr_dim_r);
-    Ipk3Reo<D, T, DeviceType>().Execute(curr_dim_r, curr_dim_c, curr_dim_f, am,
-                                        bm, dw_out, queue_idx);
+
+    DeviceLauncher<DeviceType>::Execute(
+        Ipk3ReoKernel<D, T, DeviceType>(curr_dim_r, curr_dim_c, curr_dim_f, am,
+                                        bm, dw_out),
+        queue_idx);
+
     if (multidim_refactoring_debug_print) { // debug
       PrintSubarray4D(format("decomposition: after TR-{}D[{}]", i + 1, l),
                       dw_out);

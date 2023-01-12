@@ -4,12 +4,17 @@
  * Author: Jieyang Chen (chenj3@ornl.gov)
  * Date: March 17, 2022
  */
+#include "DataTypes.h"
+
+#include "DataStructures/Array.h"
 
 #include "RuntimeXPublic.h"
 
 #include "DataTypes.h"
 
 #include "AutoTuners/AutoTuner.h"
+#include "DeviceAdapters/DeviceAdapter.h"
+#include "Kernel/Kernel.h"
 #include "Tasks/Task.h"
 
 // Serial backend should be always available
@@ -49,9 +54,14 @@
 
 #include "Utilities/CheckShape.hpp"
 #include "Utilities/OffsetCalculators.hpp"
-#include "Utilities/Serializer.hpp"
 
 #include "DataStructures/Array.hpp"
 #include "DataStructures/SubArray.hpp"
 #include "DataStructures/SubArrayCopy.hpp"
 #include "Utilities/SubArrayPrinter.hpp"
+
+#include "Utilities/Serializer.hpp"
+
+#include "DataStructures/MDRMetadata.hpp"
+
+#include "DataStructures/MDRData.hpp"

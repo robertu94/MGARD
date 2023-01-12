@@ -8,6 +8,8 @@
 #ifndef MGARD_X_UTILITIES_TYPES
 #define MGARD_X_UTILITIES_TYPES
 
+// Types defined here are for compression
+
 #include <algorithm>
 #include <cstdio>
 #include <stdint.h>
@@ -24,16 +26,6 @@ enum class processor_type : uint8_t {
   X_CUDA,
   X_HIP,
   X_SYCL
-};
-
-enum class device_type : uint8_t {
-  AUTO,
-  SERIAL,
-  OPENMP,
-  CUDA,
-  HIP,
-  SYCL,
-  NONE
 };
 
 enum class error_bound_type : uint8_t { REL, ABS };
@@ -55,7 +47,11 @@ enum class endiness_type : uint8_t { Little_Endian, Big_Endian };
 
 enum class coordinate_location : uint8_t { Embedded, External };
 
-enum class domain_decomposition_type : uint8_t { MaxDim, Linearize };
+enum class domain_decomposition_type : uint8_t { MaxDim, Block };
+
+enum class operation_type : uint8_t { Compression, MDR };
+
+enum class bitplane_encoding_type : uint8_t { GroupedBitplaneEncoding };
 } // namespace mgard_x
 
 #include <iostream>
