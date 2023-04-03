@@ -2,18 +2,24 @@
 
 This directory contains examples showing how to use MGARD.
 
-1. [an example showing to how link against MGARD][linking]
-2. [an example showing how to compress with MGARD][compression]
-3. [an example showing how to decompress with MGARD][decompression]
-4. [an example showing how to use MGARD-X High-level APIs][mgard-x-highlevel-apis]
-5. [an example showing how to use MGARD-X Low-level APIs][mgard-x-lowlevel-apis]
-6. [an example showing how to use MDR][mdr]
-7. [an example showing how to use MDR-X][mdr-x]
+1. [Linking against MGARD][linking]
+2. [Compressing with MGARD-CPU][compression]
+3. [Decompressing with MGARD-CPU][decompression]
+4. [Using MGARD-X High-level APIs][mgard-x-highlevel-apis]
+5. [Using MGARD-X Low-level APIs][mgard-x-lowlevel-apis]
+6. [Using MDR][mdr]
+7. [Using MDR-X][mdr-x]
+8. [Using MGARD-QOI][qoi]
+9. [Using MGARD-ROI][roi]
+10. [XGC 5D data case study][xgc]
 
-[linking]: linking/README.md
-[compression]: compression/README.md
-[decompression]: decompression/README.md
-[mgard-x-highlevel-apis]: mgard-x/HighLevelAPIs/README.md
-[mgard-x-lowlevel-apis]: mgard-x/LowLevelAPIs/README.md
-[mdr]: mgard-x/MDR/README.md
-[mdr-x]: mgard-x/MDR-X/README.md
+[linking]: linking
+[compression]: compression
+[decompression]: decompression
+[mgard-x-highlevel-apis]: mgard-x/HighLevelAPIs
+[mgard-x-lowlevel-apis]: mgard-x/LowLevelAPIs
+[mdr]: mgard-x/MDR
+[mdr-x]: mgard-x/MDR-X
+[qoi]: qoi
+[roi]: roi
+[xgc]: xgc-casestudy

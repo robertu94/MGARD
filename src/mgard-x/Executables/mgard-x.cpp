@@ -39,15 +39,20 @@ void print_usage_message(std::string error) {
 \t\t -m <abs|rel>: error bound mode (abs: abolute; rel: relative)\n\
 \t\t -e <error>: error bound\n\
 \t\t -s <smoothness>: smoothness parameter\n\
+\t\t -r <0|1>: internal data layout (0: Higher throughput (default) | 1: Higher compression ratio)\n\
+\t\t -b <0|1>: domain decomposition type (0: 1D max dimension  (default)| 1: N-D block)\n\
+\t\t -f <bytes>: maximum memory footprint in bytes (if not specify, no limit)\n\
 \t\t -l choose lossless compressor (0:Huffman 1:Huffman+LZ4 2:Huffman+Zstd)\n\
-\t\t -d <auto|serial|openmp|cuda|hip|sycl>: device type\n\
-\t\t -v enable verbose (show timing and statistics)\n\
 \n\
 \t -x: decompress data\n\
 \t\t -c <path to compressed file>\n\
 \t\t -o <path to decompressed file>\n\
-\t\t -d <auto|serial|cuda|hip>: device type\n\
-\t\t -v enable verbose (show timing and statistics)\n");
+\t -d <auto|serial|openmp|cuda|hip|sycl>: device type\n\
+\t -v <level>  verbose level (0: error only (default) | 1: error + infomation | 2: error + timing | 3: all)\n\
+\t -g <G> number of devices (GPUs) to use (default: 1)\n\
+\t -h <0|1>: enable/disable prefecth pipeline optimization (0: disable | 1: enable (default))\n\
+");
+
   exit(0);
 }
 
@@ -349,9 +354,10 @@ int launch_compress(mgard_x::DIM D, enum mgard_x::data_type dtype,
   mgard_x::pin_memory(original_data, original_size * sizeof(T), config);
   mgard_x::pin_memory(compressed_data, compressed_size, config);
   std::vector<const mgard_x::Byte *> coords_byte;
+  mgard_x::compress_status_type status;
   if (!non_uniform) {
-    mgard_x::compress(D, dtype, shape, tol, s, mode, original_data,
-                      compressed_data, compressed_size, config, true);
+    status = mgard_x::compress(D, dtype, shape, tol, s, mode, original_data,
+                               compressed_data, compressed_size, config, true);
   } else {
     std::vector<T *> coords;
     if (non_uniform) {
@@ -360,18 +366,22 @@ int launch_compress(mgard_x::DIM D, enum mgard_x::data_type dtype,
     for (auto &coord : coords) {
       coords_byte.push_back((const mgard_x::Byte *)coord);
     }
-    mgard_x::compress(D, dtype, shape, tol, s, mode, original_data,
-                      compressed_data, compressed_size, coords_byte, config,
-                      true);
+    status = mgard_x::compress(D, dtype, shape, tol, s, mode, original_data,
+                               compressed_data, compressed_size, coords_byte,
+                               config, true);
+  }
+
+  if (status == mgard_x::compress_status_type::OutputTooLargeFailure) {
+    std::cout << mgard_x::log::log_err
+              << "Compression failed: output too large\n";
+    exit(-1);
   }
 
   writefile(output_file, compressed_size, compressed_data);
 
   std::cout << mgard_x::log::log_info << "Compression ratio: "
-            << (double)original_size * sizeof(T) / compressed_size << "\n";
-  // printf("In size:  %10ld  Out size: %10ld  Compression ratio: %f \n",
-  //        original_size * sizeof(T), compressed_size,
-  //        (double)original_size * sizeof(T) / compressed_size);
+            << (double)original_size * sizeof(T) / compressed_size << "("
+            << original_size * sizeof(T) << "/" << compressed_size << ")\n";
 
   if (verbose) {
     config.log_level = verbose_to_log_level(verbose);
