@@ -400,9 +400,9 @@ public:
     tbz = R;
     tby = C;
     tbx = F;
-    gridz = ceil((float)total_thread_z / tbz);
-    gridy = ceil((float)total_thread_y / tby);
-    gridx = ceil((float)total_thread_x / tbx);
+    gridz = ceil((double)total_thread_z / tbz);
+    gridy = ceil((double)total_thread_y / tby);
+    gridx = ceil((double)total_thread_x / tbx);
     for (DIM d = 3; d < D; d++) {
       gridx *= v.shape(D - (d + 1));
     }
@@ -460,9 +460,9 @@ public:
     tbz = 1;
     tby = 1;
     tbx = 256;
-    gridz = ceil((float)total_thread_z / tbz);
-    gridy = ceil((float)total_thread_y / tby);
-    gridx = ceil((float)total_thread_x / tbx);
+    gridz = ceil((double)total_thread_z / tbz);
+    gridy = ceil((double)total_thread_y / tby);
+    gridx = ceil((double)total_thread_x / tbx);
     return Task(functor, gridz, gridy, gridx, tbz, tby, tbx, sm_size, queue_idx,
                 std::string(Name));
   }
@@ -633,11 +633,11 @@ public:
           queue_idx);
 
       MemoryManager<DeviceType>::Copy1D(
-          &lossless.huffman.workspace.outlier_count,
+          &lossless.huffman.outlier_count,
           lossless.huffman.workspace.outlier_count_subarray.data(), 1,
           queue_idx);
       DeviceRuntime<DeviceType>::SyncQueue(queue_idx);
-      if (lossless.huffman.workspace.outlier_count <=
+      if (lossless.huffman.outlier_count <=
           lossless.huffman.workspace.outlier_subarray.shape(0)) {
         // outlier buffer has sufficient size
         done_quantization = true;
@@ -652,22 +652,21 @@ public:
                     " GB/s");
           timer.clear();
         }
-        log::info("Outlier ratio: " +
-                  std::to_string(lossless.huffman.workspace.outlier_count) +
-                  "/" + std::to_string(total_elems) + " (" +
-                  std::to_string((double)100 *
-                                 lossless.huffman.workspace.outlier_count /
-                                 total_elems) +
-                  "%)");
+        log::info(
+            "Outlier ratio: " + std::to_string(lossless.huffman.outlier_count) +
+            "/" + std::to_string(total_elems) + " (" +
+            std::to_string((double)100 * lossless.huffman.outlier_count /
+                           total_elems) +
+            "%)");
       } else {
         log::info("Not enough workspace for outliers. Re-allocating to " +
-                  std::to_string(lossless.huffman.workspace.outlier_count));
+                  std::to_string(lossless.huffman.outlier_count));
         lossless.huffman.workspace.outlier_idx_array =
             Array<1, ATOMIC_IDX, DeviceType>(
-                {(SIZE)lossless.huffman.workspace.outlier_count});
+                {(SIZE)lossless.huffman.outlier_count});
         lossless.huffman.workspace.outlier_array =
             Array<1, QUANTIZED_INT, DeviceType>(
-                {(SIZE)lossless.huffman.workspace.outlier_count});
+                {(SIZE)lossless.huffman.outlier_count});
         lossless.huffman.workspace.outlier_idx_subarray =
             SubArray(lossless.huffman.workspace.outlier_idx_array);
         lossless.huffman.workspace.outlier_subarray =
@@ -692,7 +691,7 @@ public:
     SIZE total_elems = hierarchy->total_num_elems();
     MemoryManager<DeviceType>::Copy1D(
         lossless_compressor.huffman.workspace.outlier_count_subarray.data(),
-        &lossless_compressor.huffman.workspace.outlier_count, 1, queue_idx);
+        &lossless_compressor.huffman.outlier_count, 1, queue_idx);
     SubArray<2, SIZE, DeviceType> level_ranges_subarray(
         hierarchy->level_ranges());
     SubArray<2, int, DeviceType> level_marks_subarray(hierarchy->level_marks());
@@ -741,11 +740,10 @@ public:
       timer.start();
     }
 
-    if (prep_huffman && lossless_compressor.huffman.workspace.outlier_count) {
+    if (prep_huffman && lossless_compressor.huffman.outlier_count) {
       DeviceLauncher<DeviceType>::Execute(
           OutlierRestoreKernel<D, T, DeviceType>(
-              quantized_data,
-              lossless_compressor.huffman.workspace.outlier_count,
+              quantized_data, lossless_compressor.huffman.outlier_count,
               lossless_compressor.huffman.workspace.outlier_idx_subarray,
               lossless_compressor.huffman.workspace.outlier_subarray),
           queue_idx);

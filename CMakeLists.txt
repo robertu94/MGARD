@@ -38,7 +38,6 @@ option(MGARD_ENABLE_SERIAL "Enable SERIAL support" ON)
 option(MGARD_ENABLE_HIP "Enable HIP support" OFF)
 option(MGARD_ENABLE_SYCL "Enable SYCL support" OFF)
 option(MGARD_ENABLE_LEGACY_CUDA "Enable legacy CUDA support" OFF)
-option(MGARD_ENABLE_COORDINATE_NORMALIZATION "Enable coordinate normalication for uniform grid" ON)
 option(MGARD_ENABLE_AUTO_TUNING "Enable auto tuning" OFF)
 option(MGARD_ENABLE_MDR "Enable MDR" OFF)
 option(MGARD_ENABLE_EXTERNAL_COMPRESSOR "Enable external compressor" OFF)
@@ -112,7 +111,7 @@ if (MGARD_ENABLE_SERIAL OR
   add_subdirectory (include/mgard-x/MDR)
   add_subdirectory (include/mgard-x/MDR-X)
   find_package(PkgConfig REQUIRED)
-  pkg_search_module(zstd IMPORTED_TARGET GLOBAL libzstd)
+  find_package(ZSTD REQUIRED)
 
   add_executable(mgard-x ${CMAKE_CURRENT_SOURCE_DIR}/src/mgard-x/Executables/mgard-x.cpp)
   target_link_libraries(mgard-x mgard-library  ${CMAKE_DL_LIBS})
@@ -339,9 +338,14 @@ target_include_directories(mgard-library
 )
 target_link_libraries(mgard-library PUBLIC ZLIB::ZLIB)
 
-if(zstd_FOUND)
+if(ZSTD_FOUND)
   target_compile_definitions(mgard-library PUBLIC MGARD_ZSTD)
-  target_link_libraries(mgard-library PUBLIC PkgConfig::zstd)
+  if(ZSTD_FOUND_BY_CMAKE)
+    target_link_libraries(mgard-library PUBLIC zstd::libzstd_shared)
+  endif()
+  if(ZSTD_FOUND_BY_PKGCONFIG)
+    target_link_libraries(mgard-library PUBLIC PkgConfig::ZSTD)
+  endif()
 endif()
 
 if(MGARD_ENABLE_CUDA)
@@ -357,11 +361,11 @@ if(MGARD_ENABLE_OPENMP)
   target_link_libraries(mgard-library PUBLIC OpenMP::OpenMP_CXX)
   # A bug in CMake causing the '-fopenmp' flag missing when compiling device units during separate compilation
     # Reference: github.com/pkestene/cuda-proj-tmpl/blob/master/src/CMakeLists.txt
-    target_compile_options(mgard-library PUBLIC
-      $<$<COMPILE_LANGUAGE:CXX>:${OpenMP_CXX_FLAGS}>
-      $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler ${OpenMP_CXX_FLAGS}>
-      $<$<COMPILE_LANGUAGE:HIP>:${OpenMP_CXX_FLAGS}>
-    )
+    # target_compile_options(mgard-library PUBLIC
+    #   $<$<COMPILE_LANGUAGE:CXX>:${OpenMP_CXX_FLAGS}>
+    #   $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler ${OpenMP_CXX_FLAGS}>
+    #   $<$<COMPILE_LANGUAGE:HIP>:${OpenMP_CXX_FLAGS}>
+    # )
 endif()
 
 if(MGARD_ENABLE_TIMING)
@@ -503,7 +507,7 @@ list(POP_BACK CMAKE_MESSAGE_INDENT)
 message(STATUS "")
 message(STATUS "Libraries:")
 list(APPEND CMAKE_MESSAGE_INDENT "  ")
-message(STATUS "zstd:      ${zstd_FOUND}")
+message(STATUS "ZSTD:      ${ZSTD_FOUND}")
 message(STATUS "protobuf:  ${protobuf_FOUND}")
 if(MGARD_ENABLE_UNSTRUCTURED)
 	message(STATUS "MOAB:      ${MOAB_FOUND}")

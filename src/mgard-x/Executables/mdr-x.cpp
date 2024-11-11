@@ -6,11 +6,11 @@
  */
 
 #include <chrono>
+#include <cstring>
 #include <fstream>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <unistd.h>
 
 #include <sys/stat.h>
@@ -28,7 +28,7 @@ void print_usage_message(std::string error) {
     std::cout << mgard_x::log::log_err << error << std::endl;
   }
   printf("Options\n\
-\t -z: compress data\n\
+\t -z: refactor data\n\
 \t\t -i <path to data file to be compressed>\n\
 \t\t -c <path to compressed file>\n\
 \t\t -t <s|d>: data type (s: single; d:double)\n\
@@ -45,7 +45,7 @@ void print_usage_message(std::string error) {
 \t\t -d <auto|serial|openmp|cuda|hip|sycl>: device type\n\
 \t\t -v enable verbose (show timing and statistics)\n\
 \n\
-\t -x: decompress data\n\
+\t -x: reconstruct data\n\
 \t\t -c <path to compressed file>\n\
 \t\t -o <path to decompressed file>\n\
 \t\t -d <auto|serial|cuda|hip>: device type\n\
@@ -437,7 +437,7 @@ int launch_refactor(mgard_x::DIM D, enum mgard_x::data_type dtype,
                     const char *coords_file, int lossless,
                     int domain_decomposition,
                     enum mgard_x::device_type dev_type, int verbose,
-                    bool prefetch, mgard_x::SIZE max_memory_footprint) {
+                    mgard_x::SIZE max_memory_footprint) {
 
   mgard_x::Config config;
   config.normalize_coordinates = false;
@@ -447,10 +447,9 @@ int launch_refactor(mgard_x::DIM D, enum mgard_x::data_type dtype,
     config.domain_decomposition = mgard_x::domain_decomposition_type::MaxDim;
   } else {
     config.domain_decomposition = mgard_x::domain_decomposition_type::Block;
-    // config.block_size = 64;
+    config.block_size = 64;
   }
   config.dev_type = dev_type;
-  config.prefetch = prefetch;
   config.max_memory_footprint = max_memory_footprint;
   if (dtype == mgard_x::data_type::Float) {
     config.total_num_bitplanes = 32;
@@ -471,18 +470,28 @@ int launch_refactor(mgard_x::DIM D, enum mgard_x::data_type dtype,
   size_t original_size = 1;
   for (mgard_x::DIM i = 0; i < D; i++)
     original_size *= shape[i];
-  T *original_data;
+  T *original_data = (T *)malloc(original_size * sizeof(T));
   size_t in_size = 0;
   if (std::string(input_file).compare("random") == 0) {
     in_size = original_size * sizeof(T);
-    original_data = new T[original_size];
     srand(7117);
     T c = 0;
     for (size_t i = 0; i < original_size; i++) {
       original_data[i] = rand() % 10 + 1;
     }
   } else {
-    in_size = readfile(input_file, original_data);
+    T *file_data;
+    in_size = readfile(input_file, file_data);
+
+    size_t loaded_size = 0;
+    while (loaded_size < original_size) {
+      // std::cout << "copy input\n";
+      std::memcpy(original_data + loaded_size, file_data,
+                  std::min(in_size / sizeof(T), original_size - loaded_size) *
+                      sizeof(T));
+      loaded_size += std::min(in_size / sizeof(T), original_size - loaded_size);
+    }
+    in_size = loaded_size * sizeof(T);
   }
   if (in_size != original_size * sizeof(T)) {
     std::cout << mgard_x::log::log_warn << "input file size mismatch "
@@ -528,14 +537,12 @@ int launch_reconstruct(std::string input_file, std::string output_file,
                        std::vector<double> tols, double s,
                        enum mgard_x::error_bound_type mode,
                        bool adaptive_resolution,
-                       enum mgard_x::device_type dev_type, int verbose,
-                       bool prefetch) {
+                       enum mgard_x::device_type dev_type, int verbose) {
 
   mgard_x::Config config;
   config.normalize_coordinates = false;
   config.log_level = verbose_to_log_level(verbose);
   config.dev_type = dev_type;
-  config.prefetch = prefetch;
   config.mdr_adaptive_resolution = adaptive_resolution;
   // config.collect_uncertainty = true;
 
@@ -592,18 +599,78 @@ int launch_reconstruct(std::string input_file, std::string output_file,
 
     int subdomain_id = 0;
 
+    std::ofstream cells_file, scalars_file;
+    cells_file.open("mgard.cells",
+                    std::ios::out | std::ios::app | std::ios::binary);
+    scalars_file.open("mgard.scalars",
+                      std::ios::out | std::ios::app | std::ios::binary);
+
     for (int subdomain_id = 0; subdomain_id < reconstructed_data.data.size();
          subdomain_id++) {
+
+      std::string output = output_file + "_subdomain_" +
+                           std::to_string(subdomain_id) + "_start_";
       std::cout << "reconstructed_data " << subdomain_id << " : offset(";
       for (auto n : reconstructed_data.offset[subdomain_id]) {
         std::cout << n << " ";
+        output += std::to_string(n) + "_";
       }
+
+      size_t size = 1;
+      output += "shape_";
       std::cout << ") shape(";
       for (auto n : reconstructed_data.shape[subdomain_id]) {
         std::cout << n << " ";
+        output += std::to_string(n) + "_";
+        size *= n;
       }
       std::cout << ")\n";
+
+      output += ".dat";
+
+      if (dtype == mgard_x::data_type::Float) {
+        size *= sizeof(float);
+      } else if (dtype == mgard_x::data_type::Double) {
+        size *= sizeof(double);
+      }
+
+      writefile(output, reconstructed_data.data[subdomain_id], size);
+
+      // const char* data = reconstructed_data.data[subdomain_id];
+      scalars_file.write((char *)reconstructed_data.data[subdomain_id], size);
+
+      std::vector<int> cell_vec;
+
+      for (int z = 0; z < reconstructed_data.shape[subdomain_id][0]; z++) {
+        for (int y = 0; y < reconstructed_data.shape[subdomain_id][1]; y++) {
+          for (int x = 0; x < reconstructed_data.shape[subdomain_id][2]; x++) {
+
+            if (z != 2 && y != 2 && x != 2) {
+              cell_vec.push_back(x +
+                                 reconstructed_data.offset[subdomain_id][2]);
+              cell_vec.push_back(y +
+                                 reconstructed_data.offset[subdomain_id][1]);
+              cell_vec.push_back(z +
+                                 reconstructed_data.offset[subdomain_id][0]);
+              cell_vec.push_back(0); // level
+            } else {
+              cell_vec.push_back(
+                  x + reconstructed_data.offset[subdomain_id][2] / 64);
+              cell_vec.push_back(
+                  y + reconstructed_data.offset[subdomain_id][1] / 64);
+              cell_vec.push_back(
+                  z + reconstructed_data.offset[subdomain_id][0] / 64);
+              cell_vec.push_back(5); // level
+            }
+          }
+        }
+      }
+
+      cells_file.write((char *)cell_vec.data(), cell_vec.size() * sizeof(int));
     }
+
+    scalars_file.close();
+    cells_file.close();
 
     if (input_file.compare("none") != 0 && !config.mdr_adaptive_resolution) {
       if (dtype == mgard_x::data_type::Float) {
@@ -703,11 +770,6 @@ bool try_refactoring(int argc, char *argv[]) {
     repeat = get_arg_int(argc, argv, "-p");
   }
 
-  bool prefetch = true;
-  if (has_arg(argc, argv, "-h")) {
-    prefetch = get_arg_int(argc, argv, "-h") == 1 ? true : false;
-  }
-
   mgard_x::SIZE max_memory_footprint =
       std::numeric_limits<mgard_x::SIZE>::max();
   if (has_arg(argc, argv, "-f")) {
@@ -726,12 +788,12 @@ bool try_refactoring(int argc, char *argv[]) {
       launch_refactor<double>(
           D, dtype, input_file.c_str(), output_file.c_str(), shape, non_uniform,
           non_uniform_coords_file.c_str(), lossless_level, domain_decomposition,
-          dev_type, verbose, prefetch, max_memory_footprint);
+          dev_type, verbose, max_memory_footprint);
     } else if (dtype == mgard_x::data_type::Float) {
       launch_refactor<float>(
           D, dtype, input_file.c_str(), output_file.c_str(), shape, non_uniform,
           non_uniform_coords_file.c_str(), lossless_level, domain_decomposition,
-          dev_type, verbose, prefetch, max_memory_footprint);
+          dev_type, verbose, max_memory_footprint);
     }
   }
   return true;
@@ -831,11 +893,6 @@ bool try_reconstruction(int argc, char *argv[]) {
     repeat = get_arg_int(argc, argv, "-p");
   }
 
-  bool prefetch = true;
-  if (has_arg(argc, argv, "-h")) {
-    prefetch = get_arg_int(argc, argv, "-h") == 1 ? true : false;
-  }
-
   bool adaptive_resolution = false;
   if (has_arg(argc, argv, "-q")) {
     adaptive_resolution = get_arg_int(argc, argv, "-q") == 1 ? true : false;
@@ -845,8 +902,7 @@ bool try_reconstruction(int argc, char *argv[]) {
     std::cout << mgard_x::log::log_info << "verbose: enabled.\n";
   for (int repeat_iter = 0; repeat_iter < repeat; repeat_iter++) {
     launch_reconstruct(input_file, output_file, original_file, dtype, shape,
-                       tols, s, mode, adaptive_resolution, dev_type, verbose,
-                       prefetch);
+                       tols, s, mode, adaptive_resolution, dev_type, verbose);
   }
   return true;
 }

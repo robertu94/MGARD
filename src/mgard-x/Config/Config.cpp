@@ -22,27 +22,25 @@ Config::Config() {
   huff_block_size = 1024 * 20;
   lz4_block_size = 1 << 15;
   zstd_compress_level = 3;
-#if MGARD_ENABLE_COORDINATE_NORMALIZATION
-  normalize_coordinates = true;
-#else
   normalize_coordinates = false;
-#endif
   lossless = lossless_type::Huffman;
   reorder = 0;
   log_level = log::ERR;
   max_larget_level = std::numeric_limits<SIZE>::max(); // no limit
-  prefetch = true;
+  auto_pin_host_buffers = true;
   max_memory_footprint = std::numeric_limits<SIZE>::max(); // no limit
   total_num_bitplanes = 32;
   block_size = 256;
   temporal_dim = 0;
   temporal_dim_size = std::numeric_limits<SIZE>::max();
+  domain_decomposition_dim = 0;
+  domain_decomposition_sizes = std::vector<SIZE>();
   mdr_adaptive_resolution = false;
-  collect_uncertainty = false;
   adjust_shape = false;
   compress_with_dryrun = false;
   num_local_refactoring_level = 1;
-  cache_compressor = false;
+  auto_cache_release = false;
+  cpu_mode = cpu_parallelization_mode::INTER_BLOCK;
 }
 
 void Config::apply() { log::level = log_level; }

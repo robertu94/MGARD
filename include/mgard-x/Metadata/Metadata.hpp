@@ -219,6 +219,15 @@ public:
     // PrintSummary();
   }
 
+  void InitializeConfig(Config &config) {
+    config.domain_decomposition = ddtype;
+    config.decomposition = decomposition;
+    config.lossless = ltype;
+    config.huff_dict_size = huff_dict_size;
+    config.huff_block_size = huff_block_size;
+    config.reorder = reorder;
+  }
+
   void PrintSummary() {
     std::cout << "=======Metadata Summary=======\n";
     std::cout << "Signature: ";
@@ -265,8 +274,8 @@ public:
     if (domain_decomposed) {
       if (ddtype == domain_decomposition_type::MaxDim) {
         std::cout << "MaxDim\n";
-      } else if (ddtype == domain_decomposition_type::TemporalDim) {
-        std::cout << "TemporalDim\n";
+      } else if (ddtype == domain_decomposition_type::Variable) {
+        std::cout << "Variable\n";
       } else {
         std::cout << "Block\n";
       }
@@ -589,11 +598,11 @@ private:
         if (ddtype == domain_decomposition_type::MaxDim) {
           domainDecomposition.set_method(
               mgard::pb::DomainDecomposition::MAX_DIMENSION);
-        } else if (ddtype == domain_decomposition_type::TemporalDim) {
-          domainDecomposition.set_method(
-              mgard::pb::DomainDecomposition::TEMPORAL_DIMENSION);
         } else if (ddtype == domain_decomposition_type::Block) {
           domainDecomposition.set_method(mgard::pb::DomainDecomposition::BLOCK);
+        } else if (ddtype == domain_decomposition_type::Variable) {
+          domainDecomposition.set_method(
+              mgard::pb::DomainDecomposition::VARIABLE);
         }
       } else {
         domainDecomposition.set_method(
@@ -851,11 +860,11 @@ private:
             mgard::pb::DomainDecomposition::MAX_DIMENSION) {
           ddtype = domain_decomposition_type::MaxDim;
         } else if (domainDecomposition.method() ==
-                   mgard::pb::DomainDecomposition::TEMPORAL_DIMENSION) {
-          ddtype = domain_decomposition_type::TemporalDim;
-        } else if (domainDecomposition.method() ==
                    mgard::pb::DomainDecomposition::BLOCK) {
           ddtype = domain_decomposition_type::Block;
+        } else if (domainDecomposition.method() ==
+                   mgard::pb::DomainDecomposition::VARIABLE) {
+          ddtype = domain_decomposition_type::Variable;
         }
 
         domain_decomposed_dim = domainDecomposition.decomposition_dimension();

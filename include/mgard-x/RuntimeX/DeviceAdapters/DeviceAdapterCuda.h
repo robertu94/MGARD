@@ -679,12 +679,17 @@ public:
   }
 
   MGARDX_CONT static void SyncQueue(SIZE queue_id) {
+    log::dbg("Calling DeviceRuntime<CUDA>::SyncQueue: " +
+             std::to_string(queue_id));
     queues.SyncQueue(cuda_dev_id, queue_id);
   }
 
   MGARDX_CONT static void SyncAllQueues() { queues.SyncAllQueues(cuda_dev_id); }
 
-  MGARDX_CONT static void SyncDevice() { gpuErrchk(cudaDeviceSynchronize()); }
+  MGARDX_CONT static void SyncDevice() {
+    log::dbg("Calling DeviceRuntime<CUDA>::SyncDevice: ");
+    gpuErrchk(cudaDeviceSynchronize());
+  }
 
   MGARDX_CONT static std::string GetDeviceName() {
     return DeviceSpecs.GetDeviceName(cuda_dev_id);
@@ -1535,15 +1540,15 @@ struct WarpBitTranspose<T_org, T_trans, ALIGN, METHOD, b, B, CUDA> {
 
   MGARDX_EXEC static void Transpose(T_org *v, SIZE inc_v, T_trans *tv,
                                     SIZE inc_tv, SIZE LaneId) {
-    if (METHOD == Warp_Bit_Transpose_Serial_All) {
+    if constexpr (METHOD == Warp_Bit_Transpose_Serial_All) {
       Serial_All(v, inc_v, tv, inc_tv, LaneId);
-    } else if (METHOD == Warp_Bit_Transpose_Parallel_B_Serial_b) {
+    } else if constexpr (METHOD == Warp_Bit_Transpose_Parallel_B_Serial_b) {
       Parallel_B_Serial_b(v, inc_v, tv, inc_tv, LaneId);
-    } else if (METHOD == Warp_Bit_Transpose_Serial_B_Atomic_b) {
+    } else if constexpr (METHOD == Warp_Bit_Transpose_Serial_B_Atomic_b) {
       Serial_B_Atomic_b(v, inc_v, tv, inc_tv, LaneId);
-    } else if (METHOD == Warp_Bit_Transpose_Serial_B_Reduce_b) {
+    } else if constexpr (METHOD == Warp_Bit_Transpose_Serial_B_Reduce_b) {
       Serial_B_Reduce_b(v, inc_v, tv, inc_tv, LaneId);
-    } else if (METHOD == Warp_Bit_Transpose_Serial_B_Ballot_b) {
+    } else if constexpr (METHOD == Warp_Bit_Transpose_Serial_B_Ballot_b) {
       Serial_B_Ballot_b(v, inc_v, tv, inc_tv, LaneId);
     }
   }
@@ -1767,15 +1772,18 @@ struct BlockErrorCollect<T, T_fp, T_sfp, T_error, nblockx, nblocky, nblockz,
   MGARDX_EXEC
   static void Collect(T *v, T_error *temp, T_error *errors, SIZE num_elems,
                       SIZE num_bitplanes, SIZE IdX, SIZE IdY) {
-    if (METHOD == Error_Collecting_Serial_All)
+    if constexpr (METHOD == Error_Collecting_Serial_All)
       Serial_All(v, temp, errors, num_elems, num_bitplanes, IdX, IdY);
-    else if (METHOD == Error_Collecting_Parallel_Bitplanes_Serial_Error)
+    else if constexpr (METHOD ==
+                       Error_Collecting_Parallel_Bitplanes_Serial_Error)
       Parallel_Bitplanes_Serial_Error(v, temp, errors, num_elems, num_bitplanes,
                                       IdX, IdY);
-    else if (METHOD == Error_Collecting_Parallel_Bitplanes_Atomic_Error)
+    else if constexpr (METHOD ==
+                       Error_Collecting_Parallel_Bitplanes_Atomic_Error)
       Parallel_Bitplanes_Atomic_Error(v, temp, errors, num_elems, num_bitplanes,
                                       IdX, IdY);
-    else if (METHOD == Error_Collecting_Parallel_Bitplanes_Reduce_Error)
+    else if constexpr (METHOD ==
+                       Error_Collecting_Parallel_Bitplanes_Reduce_Error)
       Parallel_Bitplanes_Reduce_Error(v, temp, errors, num_elems, num_bitplanes,
                                       IdX, IdY);
     // else if (METHOD == Error_Collecting_Disable) {}
@@ -2113,136 +2121,146 @@ template <typename Task> void CudaHuffmanCWCustomizedNoCGKernel(Task task) {
 #define MGARD_CUDA_MAX_GRID_Y 65535
 #define MGARD_CUDA_MAX_GRID_Z 65535
 
-template <typename TaskType> class DeviceAdapter<TaskType, CUDA> {
-public:
-  MGARDX_CONT
-  DeviceAdapter(){};
+// template <typename TaskType> class DeviceAdapter<TaskType, CUDA> {
+// public:
+//   MGARDX_CONT
+//   DeviceAdapter(){};
 
-  MGARDX_CONT
-  int IsResourceEnough(TaskType &task) {
-    if (task.GetBlockDimX() * task.GetBlockDimY() * task.GetBlockDimZ() >
-        DeviceRuntime<CUDA>::GetMaxNumThreadsPerTB()) {
-      return THREADBLOCK_TOO_LARGE;
-    }
-    if (task.GetSharedMemorySize() >
-        DeviceRuntime<CUDA>::GetMaxSharedMemorySize()) {
-      return SHARED_MEMORY_TOO_LARGE;
-    }
-    return RESOURCE_ENOUGH;
-  }
+//   MGARDX_CONT
+//   int IsResourceEnough(TaskType &task) {
+//     if (task.GetBlockDimX() * task.GetBlockDimY() * task.GetBlockDimZ() >
+//         DeviceRuntime<CUDA>::GetMaxNumThreadsPerTB()) {
+//       return THREADBLOCK_TOO_LARGE;
+//     }
+//     if (task.GetSharedMemorySize() >
+//         DeviceRuntime<CUDA>::GetMaxSharedMemorySize()) {
+//       return SHARED_MEMORY_TOO_LARGE;
+//     }
+//     return RESOURCE_ENOUGH;
+//   }
 
-  MGARDX_CONT
-  ExecutionReturn Execute(TaskType &task) {
+//   MGARDX_CONT
+//   ExecutionReturn Execute(TaskType &task) {
+//     dim3 threadsPerBlock(task.GetBlockDimX(), task.GetBlockDimY(),
+//                          task.GetBlockDimZ());
+//     dim3 blockPerGrid(std::min(task.GetGridDimX(),
+//     (IDX)MGARD_CUDA_MAX_GRID_X),
+//                       std::min(task.GetGridDimY(),
+//                       (IDX)MGARD_CUDA_MAX_GRID_Y),
+//                       std::min(task.GetGridDimZ(),
+//                       (IDX)MGARD_CUDA_MAX_GRID_Z));
+//     size_t sm_size = task.GetSharedMemorySize();
 
-    dim3 threadsPerBlock(task.GetBlockDimX(), task.GetBlockDimY(),
-                         task.GetBlockDimZ());
-    dim3 blockPerGrid(std::min(task.GetGridDimX(), (IDX)MGARD_CUDA_MAX_GRID_X),
-                      std::min(task.GetGridDimY(), (IDX)MGARD_CUDA_MAX_GRID_Y),
-                      std::min(task.GetGridDimZ(), (IDX)MGARD_CUDA_MAX_GRID_Z));
-    size_t sm_size = task.GetSharedMemorySize();
+//     cudaStream_t stream = DeviceRuntime<CUDA>::GetQueue(task.GetQueueIdx());
 
-    cudaStream_t stream = DeviceRuntime<CUDA>::GetQueue(task.GetQueueIdx());
+//     if (DeviceRuntime<CUDA>::PrintKernelConfig) {
+//       std::cout << log::log_info << task.GetFunctorName() << ": <"
+//                 << threadsPerBlock.x << ", " << threadsPerBlock.y << ", "
+//                 << threadsPerBlock.z << "> <" << blockPerGrid.x << ", "
+//                 << blockPerGrid.y << ", " << blockPerGrid.z << ">\n";
+//     }
 
-    if (DeviceRuntime<CUDA>::PrintKernelConfig) {
-      std::cout << log::log_info << task.GetFunctorName() << ": <"
-                << threadsPerBlock.x << ", " << threadsPerBlock.y << ", "
-                << threadsPerBlock.z << "> <" << blockPerGrid.x << ", "
-                << blockPerGrid.y << ", " << blockPerGrid.z << ">\n";
-    }
+//     ExecutionReturn ret;
+//     if (IsResourceEnough(task) != RESOURCE_ENOUGH) {
+//       if (DeviceRuntime<CUDA>::PrintKernelConfig) {
+//         if (IsResourceEnough(task) == THREADBLOCK_TOO_LARGE) {
+//           log::info("threadblock too large.");
+//         }
+//         if (IsResourceEnough(task) == SHARED_MEMORY_TOO_LARGE) {
+//           log::info("shared memory too large.");
+//         }
+//       }
+//       ret.success = false;
+//       ret.execution_time = std::numeric_limits<double>::max();
+//       return ret;
+//     }
 
-    ExecutionReturn ret;
-    if (IsResourceEnough(task) != RESOURCE_ENOUGH) {
-      if (DeviceRuntime<CUDA>::PrintKernelConfig) {
-        if (IsResourceEnough(task) == THREADBLOCK_TOO_LARGE) {
-          log::info("threadblock too large.");
-        }
-        if (IsResourceEnough(task) == SHARED_MEMORY_TOO_LARGE) {
-          log::info("shared memory too large.");
-        }
-      }
-      ret.success = false;
-      ret.execution_time = std::numeric_limits<double>::max();
-      return ret;
-    }
+//     Timer timer;
+//     if (task.GetQueueIdx() == MGARDX_SYNCHRONIZED_QUEUE ||
+//         DeviceRuntime<CUDA>::TimingAllKernels ||
+//         AutoTuner<CUDA>::ProfileKernels) {
+//       DeviceRuntime<CUDA>::SyncDevice();
+//       timer.start();
+//     }
 
-    Timer timer;
-    if (task.GetQueueIdx() == MGARDX_SYNCHRONIZED_QUEUE ||
-        DeviceRuntime<CUDA>::TimingAllKernels ||
-        AutoTuner<CUDA>::ProfileKernels) {
-      DeviceRuntime<CUDA>::SyncDevice();
-      timer.start();
-    }
+//     // if constexpr evaluate at compile time otherwise this does not compile
+//     if constexpr (std::is_base_of<Functor<CUDA>,
+//                                   typename TaskType::Functor>::value) {
+//       for (THREAD_IDX blockz_offset = 0; blockz_offset < task.GetGridDimZ();
+//            blockz_offset += MGARD_CUDA_MAX_GRID_Z) {
+//         for (THREAD_IDX blocky_offset = 0; blocky_offset <
+//         task.GetGridDimY();
+//              blocky_offset += MGARD_CUDA_MAX_GRID_Y) {
+//           for (THREAD_IDX blockx_offset = 0; blockx_offset <
+//           task.GetGridDimX();
+//                blockx_offset += MGARD_CUDA_MAX_GRID_X) {
+//             CudaKernel<<<blockPerGrid, threadsPerBlock, sm_size, stream>>>(
+//                 task, blockz_offset, blocky_offset, blockx_offset);
+//           }
+//         }
+//       }
+//     } else if constexpr (std::is_base_of<IterFunctor<CUDA>,
+//                                          typename TaskType::Functor>::value)
+//                                          {
+//       for (THREAD_IDX blockz_offset = 0; blockz_offset < task.GetGridDimZ();
+//            blockz_offset += MGARD_CUDA_MAX_GRID_Z) {
+//         for (THREAD_IDX blocky_offset = 0; blocky_offset <
+//         task.GetGridDimY();
+//              blocky_offset += MGARD_CUDA_MAX_GRID_Y) {
+//           for (THREAD_IDX blockx_offset = 0; blockx_offset <
+//           task.GetGridDimX();
+//                blockx_offset += MGARD_CUDA_MAX_GRID_X) {
+//             CudaIterKernel<<<blockPerGrid, threadsPerBlock, sm_size,
+//             stream>>>(
+//                 task, blockz_offset, blocky_offset, blockx_offset);
+//           }
+//         }
+//       }
+//     } else if constexpr (std::is_base_of<HuffmanCLCustomizedFunctor<CUDA>,
+//                                          typename TaskType::Functor>::value)
+//                                          {
+//       if (task.GetFunctor().use_CG && DeviceRuntime<CUDA>::SupportCG()) {
+//         void *Args[] = {(void *)&task};
+//         cudaLaunchCooperativeKernel(
+//             (void *)CudaHuffmanCLCustomizedKernel<TaskType>, blockPerGrid,
+//             threadsPerBlock, Args, sm_size, stream);
+//       } else {
+//         CudaHuffmanCLCustomizedNoCGKernel(task);
+//       }
+//     } else if constexpr (std::is_base_of<HuffmanCWCustomizedFunctor<CUDA>,
+//                                          typename TaskType::Functor>::value)
+//                                          {
+//       if (task.GetFunctor().use_CG && DeviceRuntime<CUDA>::SupportCG()) {
+//         void *Args[] = {(void *)&task};
+//         cudaLaunchCooperativeKernel(
+//             (void *)CudaHuffmanCWCustomizedKernel<TaskType>, blockPerGrid,
+//             threadsPerBlock, Args, sm_size, stream);
+//       } else {
+//         CudaHuffmanCWCustomizedNoCGKernel(task);
+//       }
+//     }
+//     ErrorAsyncCheckTask(cudaGetLastError(), task);
+//     gpuErrchk(cudaGetLastError());
+//     if (DeviceRuntime<CUDA>::SyncAllKernelsAndCheckErrors) {
+//       ErrorSyncCheckTask(cudaDeviceSynchronize(), task);
+//     }
 
-    // if constexpr evaluate at compile time otherwise this does not compile
-    if constexpr (std::is_base_of<Functor<CUDA>,
-                                  typename TaskType::Functor>::value) {
-      for (THREAD_IDX blockz_offset = 0; blockz_offset < task.GetGridDimZ();
-           blockz_offset += MGARD_CUDA_MAX_GRID_Z) {
-        for (THREAD_IDX blocky_offset = 0; blocky_offset < task.GetGridDimY();
-             blocky_offset += MGARD_CUDA_MAX_GRID_Y) {
-          for (THREAD_IDX blockx_offset = 0; blockx_offset < task.GetGridDimX();
-               blockx_offset += MGARD_CUDA_MAX_GRID_X) {
-            CudaKernel<<<blockPerGrid, threadsPerBlock, sm_size, stream>>>(
-                task, blockz_offset, blocky_offset, blockx_offset);
-          }
-        }
-      }
-    } else if constexpr (std::is_base_of<IterFunctor<CUDA>,
-                                         typename TaskType::Functor>::value) {
-      for (THREAD_IDX blockz_offset = 0; blockz_offset < task.GetGridDimZ();
-           blockz_offset += MGARD_CUDA_MAX_GRID_Z) {
-        for (THREAD_IDX blocky_offset = 0; blocky_offset < task.GetGridDimY();
-             blocky_offset += MGARD_CUDA_MAX_GRID_Y) {
-          for (THREAD_IDX blockx_offset = 0; blockx_offset < task.GetGridDimX();
-               blockx_offset += MGARD_CUDA_MAX_GRID_X) {
-            CudaIterKernel<<<blockPerGrid, threadsPerBlock, sm_size, stream>>>(
-                task, blockz_offset, blocky_offset, blockx_offset);
-          }
-        }
-      }
-    } else if constexpr (std::is_base_of<HuffmanCLCustomizedFunctor<CUDA>,
-                                         typename TaskType::Functor>::value) {
-      if (task.GetFunctor().use_CG && DeviceRuntime<CUDA>::SupportCG()) {
-        void *Args[] = {(void *)&task};
-        cudaLaunchCooperativeKernel(
-            (void *)CudaHuffmanCLCustomizedKernel<TaskType>, blockPerGrid,
-            threadsPerBlock, Args, sm_size, stream);
-      } else {
-        CudaHuffmanCLCustomizedNoCGKernel(task);
-      }
-    } else if constexpr (std::is_base_of<HuffmanCWCustomizedFunctor<CUDA>,
-                                         typename TaskType::Functor>::value) {
-      if (task.GetFunctor().use_CG && DeviceRuntime<CUDA>::SupportCG()) {
-        void *Args[] = {(void *)&task};
-        cudaLaunchCooperativeKernel(
-            (void *)CudaHuffmanCWCustomizedKernel<TaskType>, blockPerGrid,
-            threadsPerBlock, Args, sm_size, stream);
-      } else {
-        CudaHuffmanCWCustomizedNoCGKernel(task);
-      }
-    }
-    ErrorAsyncCheckTask(cudaGetLastError(), task);
-    gpuErrchk(cudaGetLastError());
-    if (DeviceRuntime<CUDA>::SyncAllKernelsAndCheckErrors) {
-      ErrorSyncCheckTask(cudaDeviceSynchronize(), task);
-    }
-
-    if (task.GetQueueIdx() == MGARDX_SYNCHRONIZED_QUEUE ||
-        DeviceRuntime<CUDA>::TimingAllKernels ||
-        AutoTuner<CUDA>::ProfileKernels) {
-      DeviceRuntime<CUDA>::SyncDevice();
-      timer.end();
-      if (DeviceRuntime<CUDA>::TimingAllKernels) {
-        timer.print(task.GetFunctorName());
-      }
-      if (AutoTuner<CUDA>::ProfileKernels) {
-        ret.success = true;
-        ret.execution_time = timer.get();
-      }
-    }
-    return ret;
-  }
-};
+//     if (task.GetQueueIdx() == MGARDX_SYNCHRONIZED_QUEUE ||
+//         DeviceRuntime<CUDA>::TimingAllKernels ||
+//         AutoTuner<CUDA>::ProfileKernels) {
+//       DeviceRuntime<CUDA>::SyncDevice();
+//       timer.end();
+//       if (DeviceRuntime<CUDA>::TimingAllKernels) {
+//         timer.print(task.GetFunctorName());
+//       }
+//       if (AutoTuner<CUDA>::ProfileKernels) {
+//         ret.success = true;
+//         ret.execution_time = timer.get();
+//       }
+//     }
+//     return ret;
+//   }
+// };
 
 template <> class DeviceLauncher<CUDA> {
 public:
