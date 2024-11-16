@@ -30,8 +30,8 @@ public:
   using Decomposer = MGARDOrthoganalDecomposer<D, T_data, DeviceType>;
   using Interleaver = DirectInterleaver<D, T_data, DeviceType>;
   using Encoder = GroupedBPEncoder<D, T_data, T_bitplane, T_error, DeviceType>;
-  using Compressor = DefaultLevelCompressor<T_bitplane, DeviceType>;
-  // using Compressor = NullLevelCompressor<T_bitplane, DeviceType>;
+  // using Compressor = DefaultLevelCompressor<T_bitplane, DeviceType>;
+  using Compressor = NullLevelCompressor<T_bitplane, DeviceType>;
 
   ComposedReconstructor() : initialized(false) {}
   ComposedReconstructor(Hierarchy<D, T_data, DeviceType> &hierarchy,
@@ -142,7 +142,8 @@ public:
       level_errors = level_abs_errors;
 
       MaxErrorEstimatorOB<T_data> estimator(D);
-      SignExcludeGreedyBasedSizeInterpreter interpreter(estimator);
+      // SignExcludeGreedyBasedSizeInterpreter interpreter(estimator);
+      GreedyBasedSizeInterpreter interpreter(estimator);
       // RoundRobinSizeInterpreter interpreter(estimator);
       // InorderSizeInterpreter interpreter(estimator);
       retrieve_sizes = interpreter.interpret_retrieve_size(
@@ -154,10 +155,12 @@ public:
       SNormErrorEstimator<T_data> estimator(D, hierarchy->l_target(),
                                             mdr_metadata.requested_s);
       // InorderSizeInterpreter interpreter(estimator);
-      SignExcludeGreedyBasedSizeInterpreter interpreter(estimator);
+      GreedyBasedSizeInterpreter interpreter(estimator);
+      // SignExcludeGreedyBasedSizeInterpreter interpreter(estimator);
       // NegaBinaryGreedyBasedSizeInterpreter interpreter(estimator);
       retrieve_sizes = interpreter.interpret_retrieve_size(
-          mdr_metadata.level_sizes, level_errors, mdr_metadata.requested_tol,
+          mdr_metadata.level_sizes, level_errors,
+          std::pow(mdr_metadata.requested_tol, 2),
           mdr_metadata.requested_level_num_bitplanes);
     }
     timer.end();

@@ -618,7 +618,7 @@ public:
     DeviceNames = new std::string[NumDevices];
 
     for (int d = 0; d < NumDevices; d++) {
-      MaxSharedMemorySize[d] = 4096 * 4;
+      MaxSharedMemorySize[d] = 1e6; // 4096 * 4;
       WarpSize[d] = MGARDX_WARP_SIZE;
       NumSMs[d] = 80;
       MaxNumThreadsPerSM[d] = 1024;
@@ -1343,7 +1343,7 @@ public:
                               bool workspace_allocated, int queue_idx) {
 
     if (workspace_allocated) {
-      *result((IDX)0) = std::accumulate(v((IDX)0), v((IDX)n), 0);
+      *result((IDX)0) = std::accumulate(v((IDX)0), v((IDX)n), (T)0);
     } else {
       workspace.resize({(SIZE)1}, queue_idx);
     }
